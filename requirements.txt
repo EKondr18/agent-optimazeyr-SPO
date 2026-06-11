@@ -1,0 +1,14 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements.txt — SPO Optimizer Web App Generator Agent
+# ─────────────────────────────────────────────────────────────────────────────
+# Install:   pip install -r requirements.txt
+# Python:    3.10 or higher recommended
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Anthropic Claude API client
+# https://github.com/anthropic-ai/anthropic-sdk-python
+anthropic>=0.40.0,<1.0.0
+
+# Load ANTHROPIC_API_KEY from a local .env file (optional but convenient)
+# Place your key in .env:  ANTHROPIC_API_KEY=sk-ant-...
+python-dotenv>=1.0.0
