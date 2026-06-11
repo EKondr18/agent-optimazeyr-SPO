@@ -6,6 +6,131 @@ function fmt(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+// Replicates the GanttChart visual style for unassigned tasks
+function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
+  const dateObj = new Date(selectedDate + 'T00:00:00');
+  const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
+
+  const { traces, yOrderBottomUp, rowCount } = useMemo(() => {
+    // Build Y-axis: one row per flight, sorted alphabetically
+    const flightSet = [...new Set(unassigned.map(t => t.flight))].sort();
+
+    // Group traces by task name for consistent coloring + legend
+    const byName = {};
+    for (const t of unassigned) {
+      if (!byName[t.name]) byName[t.name] = [];
+      byName[t.name].push(t);
+    }
+
+    const traces = Object.entries(byName).map(([name, list]) => {
+      const color = colorMap[name] || '#888';
+      return {
+        type: 'bar',
+        orientation: 'h',
+        name,
+        x: list.map(t => t.end - t.start),
+        base: list.map(t => t.start.getTime()),
+        y: list.map(t => t.flight),
+        text: list.map(t => {
+          const mins = Math.round((t.end - t.start) / 60000);
+          return mins >= 30 ? name.substring(0, 12) : '';
+        }),
+        textposition: 'inside',
+        insidetextanchor: 'middle',
+        textfont: { size: 9, color: '#fff' },
+        customdata: list.map(t => ({
+          desc:   t.name,
+          flight: t.flight,
+          pos:    t.pos,
+          qual:   t.reqType,
+          start:  fmt(t.start),
+          end:    fmt(t.end),
+          dur:    `${Math.round((t.end - t.start) / 60000)} мин`,
+        })),
+        hovertemplate:
+          '<b>%{customdata.desc}</b><br>' +
+          'Рейс: <b>%{customdata.flight}</b>  |  POS: %{customdata.pos}<br>' +
+          'Время: %{customdata.start} – %{customdata.end}  (%{customdata.dur})<br>' +
+          'Квалификация: %{customdata.qual}<br>' +
+          '<extra>⚠ Не назначено</extra>',
+        marker: { color, opacity: 0.9 },
+      };
+    });
+
+    return {
+      traces,
+      yOrderBottomUp: [...flightSet].reverse(),
+      rowCount: flightSet.length,
+    };
+  }, [unassigned, colorMap]);
+
+  const ROW_PX    = 26;
+  const chartH    = Math.max(200, rowCount * ROW_PX + 110);
+  const containerH = Math.min(chartH, 420);
+
+  const fontColor = isDark ? '#d4d4d4' : '#444';
+  const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
+  const plotBg    = isDark ? '#1a1a2e' : '#FFF7ED';
+
+  return (
+    <div
+      style={{
+        height: containerH,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        border: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`,
+        borderRadius: 8,
+        marginBottom: 16,
+      }}
+    >
+      <Plot
+        data={traces}
+        layout={{
+          height: chartH,
+          barmode: 'overlay',
+          bargap: 0.15,
+          showlegend: true,
+          margin: { l: 140, r: 16, t: 8, b: 50 },
+          xaxis: {
+            type: 'date',
+            range: [dateObj.getTime(), nextDay.getTime()],
+            tickformat: '%H:%M',
+            dtick: 3600000 * 2,
+            gridcolor: gridColor,
+            tickfont: { color: fontColor },
+          },
+          yaxis: {
+            categoryarray: yOrderBottomUp,
+            categoryorder: 'array',
+            tickfont: { size: 11, color: fontColor },
+            automargin: false,
+            gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
+          },
+          legend: {
+            orientation: 'h',
+            y: -0.08,
+            yanchor: 'top',
+            font: { size: 11, color: fontColor },
+          },
+          hoverlabel: { font: { size: 12 }, namelength: -1 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: plotBg,
+          font: { color: fontColor },
+        }}
+        config={{
+          responsive: true,
+          displayModeBar: true,
+          modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+          scrollZoom: false,
+          toImageButtonOptions: { format: 'png', scale: 2 },
+        }}
+        style={{ width: '100%' }}
+        useResizeHandler
+      />
+    </div>
+  );
+}
+
 export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap, onAssign, isDark }) {
   const [selections, setSelections] = useState({});
 
@@ -14,35 +139,9 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
     [tasks, selectedDate]
   );
 
-  const dateObj = new Date(selectedDate + 'T00:00:00');
-  const nextDay = new Date(dateObj.getTime() + 24 * 3600000);
-
-  const ganttTraces = useMemo(() => {
-    const byFlight = {};
-    for (const t of unassigned) {
-      if (!byFlight[t.flight]) byFlight[t.flight] = [];
-      byFlight[t.flight].push(t);
-    }
-    return Object.entries(byFlight).map(([flight, list]) => ({
-      type: 'bar',
-      orientation: 'h',
-      name: flight,
-      x: list.map(t => t.end - t.start),
-      base: list.map(t => t.start.getTime()),
-      y: list.map(() => flight),
-      text: list.map(t => `${t.name} (${fmt(t.start)}–${fmt(t.end)})`),
-      hoverinfo: 'text',
-      marker: { color: list.map(t => colorMap[t.name] || '#888') },
-    }));
-  }, [unassigned, colorMap]);
-
   if (unassigned.length === 0) {
     return <Empty description="Бэклог пуст — все задачи распределены" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
-
-  const fontColor = isDark ? '#d4d4d4' : '#444';
-  const plotBg = isDark ? '#1a1a2e' : '#FFF7ED';
-  const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
 
   const columns = [
     {
@@ -114,33 +213,12 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Plot
-          data={ganttTraces}
-          layout={{
-            height: 280,
-            barmode: 'overlay',
-            showlegend: false,
-            margin: { l: 120, r: 20, t: 10, b: 40 },
-            xaxis: {
-              type: 'date',
-              range: [dateObj.getTime(), nextDay.getTime()],
-              tickformat: '%H:%M',
-              dtick: 3600000 * 3,
-              tickfont: { color: fontColor },
-              gridcolor: gridColor,
-            },
-            yaxis: { automargin: true, tickfont: { color: fontColor } },
-            paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: plotBg,
-            font: { color: fontColor },
-          }}
-          config={{ responsive: true, displayModeBar: false }}
-          style={{ width: '100%' }}
-          useResizeHandler
-        />
-      </div>
-
+      <BacklogGantt
+        unassigned={unassigned}
+        colorMap={colorMap}
+        selectedDate={selectedDate}
+        isDark={isDark}
+      />
       <Table
         dataSource={unassigned}
         columns={columns}
