@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
+import { Table, Select, Button, Empty, Tag, Space } from 'antd';
 import Plot from 'react-plotly.js';
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap, onAssign }) {
+export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap, onAssign, isDark }) {
   const [selections, setSelections] = useState({});
 
   const unassigned = useMemo(
@@ -36,21 +37,88 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
   }, [unassigned, colorMap]);
 
   if (unassigned.length === 0) {
-    return (
-      <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center text-green-700 font-medium">
-        ✅ Бэклог пуст! Все задачи распределены.
-      </div>
-    );
+    return <Empty description="Бэклог пуст — все задачи распределены" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
+
+  const fontColor = isDark ? '#d4d4d4' : '#444';
+  const plotBg = isDark ? '#1a1a2e' : '#FFF7ED';
+  const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
+
+  const columns = [
+    {
+      title: 'Время',
+      key: 'time',
+      width: 120,
+      render: (_, t) => `${fmt(t.start)}–${fmt(t.end)}`,
+    },
+    {
+      title: 'Тип задачи',
+      key: 'name',
+      render: (_, t) => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: colorMap[t.name] || '#888', display: 'inline-block', flexShrink: 0 }} />
+          {t.name}
+        </span>
+      ),
+    },
+    {
+      title: 'Рейс / POS',
+      key: 'flight',
+      render: (_, t) => (
+        <Space size={4}>
+          <span>{t.flight}</span>
+          <Tag size="small">{t.pos}</Tag>
+          <Tag color={t.reqType === 'SV' ? 'blue' : 'green'} size="small">{t.reqType}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: 'Назначить',
+      key: 'assign',
+      width: 240,
+      render: (_, task) => {
+        const eligible = staffList.filter(s =>
+          s.quals.includes(task.reqType) &&
+          s.shiftStart <= task.start &&
+          task.end <= s.shiftEnd
+        );
+        const sel = selections[task.id] || null;
+        return (
+          <Space>
+            <Select
+              value={sel}
+              onChange={val => setSelections(prev => ({ ...prev, [task.id]: val }))}
+              placeholder="Выбрать…"
+              style={{ width: 150 }}
+              size="small"
+              options={eligible.map(s => ({ value: s.name, label: s.name }))}
+            />
+            <Button
+              type="primary"
+              size="small"
+              disabled={!sel}
+              onClick={() => {
+                if (sel) {
+                  onAssign(task.id, sel, true);
+                  setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
+                }
+              }}
+            >
+              Назначить
+            </Button>
+          </Space>
+        );
+      },
+    },
+  ];
 
   return (
     <div>
-      {/* Mini Gantt */}
-      <div className="mb-4">
+      <div style={{ marginBottom: 16 }}>
         <Plot
           data={ganttTraces}
           layout={{
-            height: 300,
+            height: 280,
             barmode: 'overlay',
             showlegend: false,
             margin: { l: 120, r: 20, t: 10, b: 40 },
@@ -59,65 +127,28 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
               range: [dateObj.getTime(), nextDay.getTime()],
               tickformat: '%H:%M',
               dtick: 3600000 * 3,
+              tickfont: { color: fontColor },
+              gridcolor: gridColor,
             },
-            yaxis: { automargin: true },
+            yaxis: { automargin: true, tickfont: { color: fontColor } },
             paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: '#FFF7ED',
+            plot_bgcolor: plotBg,
+            font: { color: fontColor },
           }}
           config={{ responsive: true, displayModeBar: false }}
           style={{ width: '100%' }}
+          useResizeHandler
         />
       </div>
 
-      {/* Manual assignment */}
-      <div className="max-h-96 overflow-y-auto space-y-2">
-        {unassigned.map(task => {
-          const eligible = staffList.filter(s =>
-            s.quals.includes(task.reqType) &&
-            s.shiftStart <= task.start &&
-            task.end <= s.shiftEnd
-          );
-          const sel = selections[task.id] || '';
-
-          return (
-            <div
-              key={task.id}
-              className="backlog-row flex items-center gap-3 p-3 rounded-lg bg-white border border-gray-200"
-              style={{ borderLeftColor: colorMap[task.name] || '#888', borderLeftWidth: 4 }}
-            >
-              <div className="flex-1 text-sm text-gray-700 min-w-0">
-                <span className="font-medium">{fmt(task.start)}–{fmt(task.end)}</span>
-                {' | '}{task.name}{' | '}
-                <span className="text-gray-500">Рейс: {task.flight}</span>
-                {' | POS: '}{task.pos}
-                {' | '}<span className={task.reqType === 'SV' ? 'text-blue-600' : 'text-green-600'}>{task.reqType}</span>
-              </div>
-              <select
-                value={sel}
-                onChange={e => setSelections(prev => ({ ...prev, [task.id]: e.target.value }))}
-                className="text-sm border border-gray-300 rounded px-2 py-1 bg-white min-w-[160px]"
-              >
-                <option value="">Выбрать сотрудника…</option>
-                {eligible.map(s => (
-                  <option key={s.name} value={s.name}>{s.name}</option>
-                ))}
-              </select>
-              <button
-                disabled={!sel}
-                onClick={() => {
-                  if (sel) {
-                    onAssign(task.id, sel, true);
-                    setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
-                  }
-                }}
-                className="text-sm px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700"
-              >
-                ➡ Назначить
-              </button>
-            </div>
-          );
-        })}
-      </div>
+      <Table
+        dataSource={unassigned}
+        columns={columns}
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `Всего: ${total}` }}
+        scroll={{ x: 600 }}
+      />
     </div>
   );
 }
