@@ -5,9 +5,10 @@ function tasksOverlap(a, b) {
 }
 
 function hasConflict(empTasks, newTask) {
-  // Tasks on same flight are exempt from overlap check
   for (const t of empTasks) {
-    if (t.flight === newTask.flight && t.flight !== 'Рейс не указ.') continue;
+    // Same flight + DIFFERENT task name = working same plane with different role → allow overlap
+    // Same flight + SAME task name = 2 identical tasks need 2 different people → do NOT exempt
+    if (t.flight === newTask.flight && t.flight !== 'Рейс не указ.' && t.name !== newTask.name) continue;
     if (tasksOverlap(t, newTask)) return true;
   }
   return false;
@@ -23,17 +24,16 @@ function getLastTaskPos(empTasks, beforeTime) {
 function scoreEmployee(staff, assignedTasks, task) {
   const empTasks = assignedTasks[staff.name] || [];
   const lastPos = getLastTaskPos(empTasks, task.start);
-  // Bonus: already has task on same flight → distance = 0
-  const hasSameFlight = empTasks.some(t =>
-    t.flight === task.flight && task.flight !== 'Рейс не указ.'
+  // Bonus distance only when employee has a DIFFERENT task on same flight (complementary roles)
+  const hasSameFlightDiffTask = empTasks.some(t =>
+    t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name
   );
-  const dist = hasSameFlight ? 0 : (lastPos ? getPosDistance(lastPos, task.pos) : 10);
+  const dist = hasSameFlightDiffTask ? 0 : (lastPos ? getPosDistance(lastPos, task.pos) : 10);
   const load = empTasks.length;
   return { dist, load };
 }
 
 export function runOptimizer(tasks, staffDB, selectedDate) {
-  // Shallow-copy tasks; deep-copy objects for selectedDate
   let result = tasks.map(t =>
     t.date === selectedDate && !t.isLocked
       ? { ...t, employee: 'Не назначено' }
@@ -43,11 +43,9 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   const staff = staffDB[selectedDate] || [];
   if (staff.length === 0) return result;
 
-  // Build working assignment map: empName → Task[]
   const assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
 
-  // Collect locked tasks into assignedTasks first
   for (const t of result) {
     if (t.date === selectedDate && t.isLocked && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
@@ -55,14 +53,13 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     }
   }
 
-  // Sort unlocked tasks on selectedDate by start time
   const toAssign = result
     .filter(t => t.date === selectedDate && !t.isLocked)
     .sort((a, b) => a.start - b.start);
 
   const backlog = [];
 
-  // ── PASS 1: Greedy assignment ────────────────────────────────────────────────
+  // ── PASS 1: Greedy assignment ──────────────────────────────────────────────
   for (const task of toAssign) {
     let bestStaff = null;
     let bestScore = null;
@@ -95,7 +92,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     }
   }
 
-  // ── PASS 2: Rotation for backlog tasks ───────────────────────────────────────
+  // ── PASS 2: Rotation for backlog tasks ────────────────────────────────────
   for (const task of backlog) {
     let resolved = false;
 
@@ -106,12 +103,11 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
 
       const empTasks = assignedTasks[s.name] || [];
       const conflicts = empTasks.filter(ct => {
-        if (ct.flight === task.flight && task.flight !== 'Рейс не указ.') return false;
+        if (ct.flight === task.flight && task.flight !== 'Рейс не указ.' && ct.name !== task.name) return false;
         return tasksOverlap(ct, task);
       });
 
       if (conflicts.length === 0) {
-        // No conflicts — assign directly (shouldn't normally happen but handle it)
         const idx = result.findIndex(t => t.id === task.id);
         result[idx] = { ...result[idx], employee: s.name };
         if (!assignedTasks[s.name]) assignedTasks[s.name] = [];
@@ -120,11 +116,9 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
         break;
       }
 
-      // Check none are locked
       if (conflicts.some(ct => ct.isLocked)) continue;
 
-      // Try to relocate each conflict
-      const migrations = []; // [{task, from, to}]
+      const migrations = [];
       let allMoved = true;
 
       const tempAssigned = Object.fromEntries(
@@ -141,7 +135,6 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
           const altTasks = tempAssigned[altStaff.name] || [];
           if (!hasConflict(altTasks, conflict)) {
             migrations.push({ task: conflict, from: s.name, to: altStaff.name });
-            // Update temp state
             tempAssigned[s.name] = (tempAssigned[s.name] || []).filter(t => t.id !== conflict.id);
             if (!tempAssigned[altStaff.name]) tempAssigned[altStaff.name] = [];
             tempAssigned[altStaff.name].push(conflict);
@@ -153,7 +146,6 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
       }
 
       if (allMoved) {
-        // Commit migrations
         for (const { task: mt, from, to } of migrations) {
           const idx = result.findIndex(t => t.id === mt.id);
           result[idx] = { ...result[idx], employee: to };
@@ -161,7 +153,6 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
           if (!assignedTasks[to]) assignedTasks[to] = [];
           assignedTasks[to].push(result[idx]);
         }
-        // Assign the backlog task
         const idx = result.findIndex(t => t.id === task.id);
         result[idx] = { ...result[idx], employee: s.name };
         if (!assignedTasks[s.name]) assignedTasks[s.name] = [];

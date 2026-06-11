@@ -1,4 +1,14 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import {
+  ConfigProvider, Layout, Button, Select, Switch, Input,
+  Checkbox, Space, Drawer, Collapse, Typography, Alert,
+  Spin, Empty, theme as antdTheme, Badge, Divider
+} from 'antd';
+import {
+  UploadOutlined, ThunderboltOutlined, ClearOutlined,
+  MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
+  UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
+} from '@ant-design/icons';
 import { parseCSV } from './utils/dataParser';
 import { runOptimizer } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
@@ -7,28 +17,116 @@ import BacklogPanel from './components/BacklogPanel';
 import TaskDelayPanel from './components/TaskDelayPanel';
 import HourlyLoadChart from './components/HourlyLoadChart';
 
-function SectionCard({ icon, title, badge, children, defaultOpen = true }) {
-  const [open, setOpen] = useState(defaultOpen);
+const { Sider, Content, Header } = Layout;
+const { darkAlgorithm, defaultAlgorithm } = antdTheme;
+const { Text } = Typography;
+
+function SidebarContent({
+  isDark, hasData, fileRef, handleFileUpload, handleDemoLoad,
+  availableDates, selectedDate, setSelectedDate, setOptimizerRan,
+  handleRunOptimizer, handleResetBacklog,
+  filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
+  onClose,
+}) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 rounded-xl transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
-          <h2 className="text-base font-semibold text-gray-800">{title}</h2>
-          {badge !== undefined && badge !== null && (
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-              badge === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-            }`}>
-              {badge}
-            </span>
-          )}
+    <div style={{ padding: '0 12px 16px', height: '100%', overflowY: 'auto' }}>
+      {/* Logo */}
+      <div style={{ padding: '16px 0 12px', borderBottom: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 20 }}>🛫</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.3 }}>Пульт КК — Внуково</div>
+            <div style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>SPO оптимизатор SV+GH</div>
+          </div>
         </div>
-        <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && <div className="px-5 pb-5">{children}</div>}
+      </div>
+
+      {/* Data loading */}
+      <div style={{ marginBottom: 16 }}>
+        <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Данные</Text>
+        <input ref={fileRef} type="file" accept=".csv,.txt" onChange={e => { handleFileUpload(e); onClose?.(); }} style={{ display: 'none' }} />
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Button icon={<UploadOutlined />} block onClick={() => fileRef.current?.click()}>
+            Загрузить CSV
+          </Button>
+          <Button block onClick={() => { handleDemoLoad(); onClose?.(); }}>
+            🎬 Демо-данные
+          </Button>
+        </Space>
+      </div>
+
+      {hasData && (
+        <>
+          <Divider style={{ margin: '8px 0' }} />
+
+          {/* Date selector */}
+          <div style={{ marginBottom: 16 }}>
+            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Дата смены</Text>
+            <Select
+              value={selectedDate}
+              onChange={val => { setSelectedDate(val); setOptimizerRan(false); }}
+              style={{ width: '100%' }}
+              options={availableDates.map(d => ({ value: d, label: d }))}
+            />
+          </div>
+
+          {/* Optimizer */}
+          <div style={{ marginBottom: 16 }}>
+            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Оптимизация</Text>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Button
+                type="primary"
+                icon={<ThunderboltOutlined />}
+                block
+                onClick={() => { handleRunOptimizer(); onClose?.(); }}
+              >
+                Запустить оптимизатор
+              </Button>
+              <Button
+                icon={<ClearOutlined />}
+                block
+                onClick={() => { handleResetBacklog(); onClose?.(); }}
+              >
+                Сбросить в бэклог
+              </Button>
+            </Space>
+          </div>
+
+          <Divider style={{ margin: '8px 0' }} />
+
+          {/* Task type filter */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa' }}>Типы задач</Text>
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, fontSize: 11 }}
+                onClick={() => setFilterTypes(
+                  filterTypes.length === allTaskTypes.length ? [] : [...allTaskTypes]
+                )}
+              >
+                {filterTypes.length === allTaskTypes.length ? 'Снять все' : 'Выбрать все'}
+              </Button>
+            </div>
+            <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {allTaskTypes.map(name => (
+                <Checkbox
+                  key={name}
+                  checked={filterTypes.includes(name)}
+                  onChange={() => toggleType(name)}
+                  style={{ marginInlineStart: 0 }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: colorMap[name] || '#888', display: 'inline-block', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12 }} title={name}>{name}</span>
+                  </span>
+                </Checkbox>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -43,7 +141,15 @@ export default function App() {
   const [filterFlight, setFilterFlight] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isDark, setIsDark] = useState(false);
+  const [mobileBroken, setMobileBroken] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const fileRef = useRef();
+
+  useEffect(() => {
+    document.body.style.background = isDark ? '#0d0d0d' : '#f5f5f5';
+    document.body.style.margin = '0';
+  }, [isDark]);
 
   const availableDates = useMemo(
     () => [...new Set(tasksDB.map(t => t.date))].sort(),
@@ -112,7 +218,9 @@ export default function App() {
   function handleResetBacklog() {
     setTasksDB(prev =>
       prev.map(t =>
-        t.date === selectedDate && !t.isLocked ? { ...t, employee: 'Не назначено' } : t
+        t.date === selectedDate
+          ? { ...t, employee: 'Не назначено', isLocked: false }
+          : t
       )
     );
     setOptimizerRan(false);
@@ -145,200 +253,253 @@ export default function App() {
 
   const hasData = tasksDB.length > 0;
 
+  const sidebarProps = {
+    isDark, hasData, fileRef, handleFileUpload, handleDemoLoad,
+    availableDates, selectedDate, setSelectedDate, setOptimizerRan,
+    handleRunOptimizer, handleResetBacklog,
+    filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
+  };
+
+  const headerBg = isDark ? '#001529' : '#1677ff';
+  const contentBg = isDark ? '#0d0d0d' : '#f5f5f5';
+
+  const collapseItems = hasData && !isLoading ? [
+    {
+      key: 'gantt',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <BarChartOutlined style={{ marginRight: 8 }} />
+          Оперативный план-график ({currentTasks.length} задач)
+        </span>
+      ),
+      children: (
+        <div>
+          <Input
+            placeholder="Фильтр по рейсу…"
+            value={filterFlight}
+            onChange={e => setFilterFlight(e.target.value)}
+            allowClear
+            style={{ width: 220, marginBottom: 12 }}
+          />
+          <GanttChart
+            tasks={tasksDB}
+            colorMap={colorMap}
+            selectedDate={selectedDate}
+            filterTypes={filterTypes}
+            filterFlight={filterFlight}
+            isDark={isDark}
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'backlog',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <UnorderedListOutlined style={{ marginRight: 8 }} />
+          Нераспределённые задачи
+          {backlogCount > 0 && <Badge count={backlogCount} style={{ marginLeft: 8 }} />}
+        </span>
+      ),
+      children: (
+        <BacklogPanel
+          tasks={tasksDB}
+          staffList={currentStaff}
+          selectedDate={selectedDate}
+          colorMap={colorMap}
+          onAssign={handleAssign}
+          isDark={isDark}
+        />
+      ),
+    },
+    {
+      key: 'delays',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <ClockCircleOutlined style={{ marginRight: 8 }} />
+          Модуль задержки задач
+        </span>
+      ),
+      children: (
+        <TaskDelayPanel
+          tasks={tasksDB}
+          selectedDate={selectedDate}
+          onApplyDelays={handleApplyDelays}
+        />
+      ),
+    },
+    {
+      key: 'load',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <RiseOutlined style={{ marginRight: 8 }} />
+          График нагрузки и потребности штата
+        </span>
+      ),
+      children: (
+        <HourlyLoadChart
+          tasks={tasksDB}
+          selectedDate={selectedDate}
+          selectedTaskTypes={filterTypes}
+          colorMap={colorMap}
+          isDark={isDark}
+        />
+      ),
+    },
+  ] : [];
+
   return (
-    <div className="flex h-screen bg-gray-100 overflow-hidden">
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col shrink-0 overflow-y-auto">
-        {/* Sidebar header */}
-        <div className="px-4 pt-5 pb-3 border-b border-gray-100">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xl">🛫</span>
-            <span className="font-bold text-gray-800 text-sm leading-tight">Пульт КК — Внуково</span>
-          </div>
-          <p className="text-xs text-gray-400 leading-tight">SPO оптимизатор SV+GH</p>
-        </div>
+    <ConfigProvider
+      theme={{
+        algorithm: isDark ? darkAlgorithm : defaultAlgorithm,
+        token: { colorPrimary: '#1677ff', borderRadius: 8 },
+      }}
+    >
+      <Layout style={{ height: '100vh', background: contentBg }}>
+        {/* Desktop Sidebar */}
+        <Sider
+          width={260}
+          breakpoint="md"
+          collapsedWidth={0}
+          onBreakpoint={broken => setMobileBroken(broken)}
+          trigger={null}
+          style={{
+            background: isDark ? '#141414' : '#ffffff',
+            borderRight: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`,
+            overflow: 'hidden',
+            height: '100vh',
+            position: 'sticky',
+            top: 0,
+          }}
+        >
+          <SidebarContent {...sidebarProps} onClose={null} />
+        </Sider>
 
-        <div className="flex-1 flex flex-col gap-5 px-4 py-4">
-          {/* Upload */}
-          <div>
-            <p className="sidebar-label">Данные</p>
-            <input ref={fileRef} type="file" accept=".csv,.txt" onChange={handleFileUpload} className="hidden" />
-            <button onClick={() => fileRef.current?.click()}
-              className="w-full text-sm bg-blue-600 text-white rounded-lg px-3 py-2 mb-2 hover:bg-blue-700 transition-colors font-medium">
-              📂 Загрузить CSV
-            </button>
-            <button onClick={handleDemoLoad}
-              className="w-full text-sm bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors">
-              🎬 Демо-данные
-            </button>
-          </div>
-
-          {/* Date */}
-          {hasData && (
-            <div>
-              <p className="sidebar-label">Дата смены</p>
-              <select
-                value={selectedDate}
-                onChange={e => { setSelectedDate(e.target.value); setOptimizerRan(false); }}
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:ring-2 focus:ring-blue-300"
-              >
-                {availableDates.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Optimizer actions */}
-          {hasData && (
-            <div>
-              <p className="sidebar-label">Оптимизация</p>
-              <button
-                onClick={handleRunOptimizer}
-                className="w-full text-sm bg-purple-600 text-white rounded-lg px-3 py-2.5 mb-2 hover:bg-purple-700 transition-colors font-semibold shadow-sm"
-              >
-                🪄 Запустить оптимизатор
-              </button>
-              <button
-                onClick={handleResetBacklog}
-                className="w-full text-sm bg-gray-100 text-gray-600 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors"
-              >
-                🧹 Сбросить в бэклог
-              </button>
-            </div>
-          )}
-
-          {/* Task type filter */}
-          {hasData && (
-            <div className="flex-1 min-h-0">
-              <div className="flex justify-between items-center mb-2">
-                <p className="sidebar-label mb-0">Типы задач</p>
-                <button
-                  onClick={() => setFilterTypes(
-                    filterTypes.length === allTaskTypes.length ? [] : [...allTaskTypes]
-                  )}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  {filterTypes.length === allTaskTypes.length ? 'Снять' : 'Все'}
-                </button>
-              </div>
-              <div className="space-y-1.5 overflow-y-auto max-h-48">
-                {allTaskTypes.map(name => (
-                  <label key={name} className="flex items-center gap-2 cursor-pointer group">
-                    <input type="checkbox" checked={filterTypes.includes(name)}
-                      onChange={() => toggleType(name)} className="rounded shrink-0" />
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ background: colorMap[name] || '#888' }} />
-                    <span className="text-xs text-gray-700 truncate" title={name}>{name}</span>
-                  </label>
-                ))}
+        <Layout style={{ background: contentBg }}>
+          {/* Header */}
+          <Header
+            style={{
+              background: headerBg,
+              padding: '0 16px',
+              height: 56,
+              lineHeight: '56px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              position: 'sticky',
+              top: 0,
+              zIndex: 100,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {mobileBroken && (
+                <Button
+                  icon={<MenuOutlined />}
+                  onClick={() => setDrawerOpen(true)}
+                  style={{ background: 'transparent', border: 'none', color: '#fff', boxShadow: 'none' }}
+                />
+              )}
+              <div>
+                <div style={{ color: '#fff', fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
+                  Глобальный пульт КК — Внуково
+                </div>
+                {!mobileBroken && (
+                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, lineHeight: 1.2 }}>
+                    Оптимизация совмещения задач SV+GH
+                  </div>
+                )}
               </div>
             </div>
-          )}
-        </div>
-      </aside>
 
-      {/* ── Main scroll area ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* Sticky header */}
-        <header className="bg-blue-700 text-white px-6 py-3 sticky top-0 z-20 shadow-md shrink-0">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="font-bold text-base leading-tight">Глобальный пульт КК — Внуково</h1>
-              <p className="text-blue-200 text-xs">Оптимизация совмещения задач SV+GH с контролем нагрузки</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {hasData && selectedDate && !mobileBroken && (
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, lineHeight: 1.1 }}>Дата</div>
+                  <div style={{ color: '#fff', fontWeight: 600, fontSize: 13, lineHeight: 1.1 }}>{selectedDate}</div>
+                </div>
+              )}
+              <Switch
+                checkedChildren={<BulbFilled />}
+                unCheckedChildren={<BulbOutlined />}
+                checked={isDark}
+                onChange={setIsDark}
+                title="Переключить тему"
+              />
             </div>
-            {hasData && selectedDate && (
-              <div className="text-right">
-                <p className="text-blue-100 text-xs">Операционная дата</p>
-                <p className="font-semibold text-sm">{selectedDate}</p>
+          </Header>
+
+          {/* Main content */}
+          <Content
+            style={{
+              overflow: 'auto',
+              padding: '16px',
+              background: contentBg,
+            }}
+          >
+            {error && (
+              <Alert
+                message={error}
+                type="error"
+                showIcon
+                closable
+                onClose={() => setError(null)}
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
+            {isLoading && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
+                <Spin size="large" tip="Загрузка данных…" />
               </div>
             )}
-          </div>
-        </header>
 
-        {/* Content */}
-        <main className="flex-1 p-5 space-y-4">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
-              ⚠️ {error}
-            </div>
-          )}
-
-          {isLoading && (
-            <div className="flex items-center justify-center h-40 text-gray-400 text-sm gap-2">
-              <span className="animate-spin">⏳</span> Загрузка данных…
-            </div>
-          )}
-
-          {!hasData && !isLoading && (
-            <div className="flex flex-col items-center justify-center h-64 text-gray-400 gap-3">
-              <span className="text-5xl">📋</span>
-              <p className="text-sm font-medium">Загрузите CSV-файл или нажмите «Демо-данные»</p>
-              <p className="text-xs text-gray-300">Данные будут отображены на этой странице</p>
-            </div>
-          )}
-
-          {hasData && !isLoading && (
-            <>
-              {/* Metrics */}
-              <MetricsSummary tasks={tasksDB} staffList={currentStaff} selectedDate={selectedDate} />
-
-              {/* Gantt chart */}
-              <SectionCard icon="📊" title={`Оперативный план-график (${currentTasks.length} задач)`}>
-                <div className="mb-3">
-                  <input
-                    type="text"
-                    placeholder="Фильтр по рейсу…"
-                    value={filterFlight}
-                    onChange={e => setFilterFlight(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-56 focus:ring-2 focus:ring-blue-200"
-                  />
-                </div>
-                <GanttChart
-                  tasks={tasksDB}
-                  colorMap={colorMap}
-                  selectedDate={selectedDate}
-                  filterTypes={filterTypes}
-                  filterFlight={filterFlight}
+            {!hasData && !isLoading && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 300 }}>
+                <Empty
+                  image={<span style={{ fontSize: 64 }}>📋</span>}
+                  description={
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+                        Загрузите данные для начала работы
+                      </div>
+                      <div style={{ fontSize: 13, color: isDark ? '#666' : '#aaa' }}>
+                        Используйте кнопки на боковой панели
+                      </div>
+                    </div>
+                  }
                 />
-              </SectionCard>
+              </div>
+            )}
 
-              {/* Backlog */}
-              <SectionCard
-                icon="📋"
-                title="Нераспределённые задачи"
-                badge={backlogCount}
-                defaultOpen={backlogCount > 0}
-              >
-                <BacklogPanel
+            {hasData && !isLoading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <MetricsSummary
                   tasks={tasksDB}
                   staffList={currentStaff}
                   selectedDate={selectedDate}
-                  colorMap={colorMap}
-                  onAssign={handleAssign}
                 />
-              </SectionCard>
+                <Collapse
+                  items={collapseItems}
+                  defaultActiveKey={['gantt', 'load']}
+                  style={{ background: 'transparent' }}
+                />
+              </div>
+            )}
+          </Content>
+        </Layout>
 
-              {/* Delays */}
-              <SectionCard icon="⏱" title="Модуль задержки задач" defaultOpen={false}>
-                <TaskDelayPanel
-                  tasks={tasksDB}
-                  selectedDate={selectedDate}
-                  onApplyDelays={handleApplyDelays}
-                />
-              </SectionCard>
-
-              {/* Load chart */}
-              <SectionCard icon="📈" title="График нагрузки и потребности штата" defaultOpen={true}>
-                <HourlyLoadChart
-                  tasks={tasksDB}
-                  selectedDate={selectedDate}
-                  selectedTaskTypes={filterTypes}
-                  colorMap={colorMap}
-                />
-              </SectionCard>
-            </>
-          )}
-        </main>
-      </div>
-    </div>
+        {/* Mobile Drawer */}
+        <Drawer
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={280}
+          styles={{ body: { padding: 0 }, header: { display: 'none' } }}
+        >
+          <SidebarContent {...sidebarProps} onClose={() => setDrawerOpen(false)} />
+        </Drawer>
+      </Layout>
+    </ConfigProvider>
   );
 }
