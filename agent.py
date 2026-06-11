@@ -55,7 +55,7 @@ except ImportError:
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MODEL         = "claude-opus-4-5"
+MODEL         = "claude-opus-4-8"
 MAX_TOKENS    = 8192
 MAX_RETRIES   = 3
 RETRY_BASE_S  = 5.0    # seconds; doubles on each retry
