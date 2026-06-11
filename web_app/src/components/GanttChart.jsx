@@ -128,7 +128,7 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
           barmode: 'overlay',
           bargap: 0.15,
           showlegend: true,
-          margin: { l: 210, r: 16, t: 8, b: 50 },
+          margin: { l: 210, r: 16, t: 52, b: 50 },
           xaxis: {
             type: 'date',
             range: [dateObj.getTime(), nextDay.getTime()],
@@ -136,6 +136,8 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
             dtick: 3600000 * 2,
             gridcolor: gridColor,
             tickfont: { color: fontColor },
+            mirror: 'allticks',   // time labels at top AND bottom → top stays visible on scroll
+            showline: true,
           },
           yaxis: {
             categoryarray: yOrderBottomUp,
