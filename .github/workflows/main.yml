@@ -193,6 +193,8 @@ jobs:
 
       - name: "Configure GitHub Pages"
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: "Upload build artefact to GitHub Pages"
         uses: actions/upload-pages-artifact@v3
