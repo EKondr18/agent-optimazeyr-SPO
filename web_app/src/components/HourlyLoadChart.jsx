@@ -57,18 +57,19 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
     const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
     const plotBg = isDark ? '#1a1a2e' : '#F8FAFC';
 
+    // No stackgroup — each trace fills from zero independently.
+    // Sorted largest→smallest so biggest area renders at back, smaller ones visible on top.
     const areaTraces = sortedTypes.map(typeName => {
       const color = colorMap[typeName] || '#888888';
       return {
         type: 'scatter',
         mode: 'lines',
         fill: 'tozeroy',
-        stackgroup: 'one',
         name: typeName,
         x: xLabels,
         y: byType[typeName],
-        line: { color, width: 1 },
-        fillcolor: hexToRgba(color, 0.75),
+        line: { color, width: 1.5 },
+        fillcolor: hexToRgba(color, 0.62),
         hovertemplate: `<b>${typeName}</b>: %{y}<extra></extra>`,
       };
     });
