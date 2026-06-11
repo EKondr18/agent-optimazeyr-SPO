@@ -89,15 +89,10 @@ export function parseCSV(csvText) {
     const flightNumber = (row['Номер рейса'] || '').trim() || 'Рейс не указ.';
     const pos = (row['POS'] || '').trim() || 'ПЕРРОН';
 
-    // Date from "Дата рейса" (DD.MM.YYYY) or derive from start
-    const rawDate = row['Дата рейса'] || '';
-    let taskDate;
-    if (rawDate.trim()) {
-      const d = parseDateOnly(rawDate);
-      taskDate = d ? toYMD(d) : toYMD(start);
-    } else {
-      taskDate = toYMD(start);
-    }
+    // Use start-time date (matches original Python app behaviour:
+    // a task starting at 00:02 on May 4th belongs to May 4th even if
+    // "Дата рейса" says May 3rd)
+    const taskDate = toYMD(start);
 
     // Zone
     const descLower = description.toLowerCase();
