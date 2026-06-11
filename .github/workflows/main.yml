@@ -1,22 +1,25 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# .github/workflows/generate-webapp.yml
+# .github/workflows/main.yml
 #
 # SPO Optimizer — Generate React Web App & Deploy to GitHub Pages
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Triggers:
-#   • Push to `main` that touches agent.py, source files, or requirements.txt
+#   • Push to `main` or `claude/clever-ptolemy-t83pbr` touching relevant files
 #   • Manual dispatch (Actions tab → "Run workflow")
 #
 # Required GitHub Secrets (Settings → Secrets and variables → Actions):
 #   ANTHROPIC_API_KEY   — your Anthropic API key (sk-ant-…)
+#                         Only needed when force_regenerate=true or web_app/ is absent.
 #
 # Required GitHub Pages settings (Settings → Pages):
 #   Source: "GitHub Actions"
 #
 # Pipeline stages:
 #   1. generate  — Run agent.py to produce the React source in web_app/
-#   2. build     — npm ci + npm run build
+#                  (skipped automatically if web_app/package.json already exists
+#                   and force_regenerate != "true")
+#   2. build     — npm install + npm run build
 #   3. deploy    — Push dist/ to GitHub Pages
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -24,18 +27,20 @@ name: "Generate & Deploy SPO Optimizer"
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - "main"
+      - "claude/clever-ptolemy-t83pbr"
     paths:
       - "agent.py"
       - "requirements.txt"
       - "source/**"
-      - ".github/workflows/generate-webapp.yml"
+      - "web_app/**"
+      - ".github/workflows/main.yml"
 
-  # Allow manual re-runs from the Actions tab
   workflow_dispatch:
     inputs:
       force_regenerate:
-        description: "Force full regeneration (ignore cache)"
+        description: "Force full regeneration via Claude AI (requires ANTHROPIC_API_KEY secret)"
         required: false
         default: "false"
         type: choice
@@ -43,9 +48,9 @@ on:
 
 # ── Permissions ───────────────────────────────────────────────────────────────
 permissions:
-  contents: write       # needed to commit generated files back to the repo
-  pages: write          # needed for GitHub Pages deployment
-  id-token: write       # needed for OIDC token used by deploy-pages
+  contents: write
+  pages: write
+  id-token: write
 
 # ── Prevent parallel deployments ─────────────────────────────────────────────
 concurrency:
@@ -55,14 +60,13 @@ concurrency:
 # ═════════════════════════════════════════════════════════════════════════════
 jobs:
 
-  # ── JOB 1: Generate the React web app source using Claude AI ──────────────
+  # ── JOB 1: Generate the React web app source (or reuse existing) ──────────
   generate:
     name: "🤖 Generate Web App (Claude AI)"
     runs-on: ubuntu-latest
 
     outputs:
-      # Pass a flag to downstream jobs so they can skip if generation was cached
-      generated: ${{ steps.run-agent.outputs.generated }}
+      generated: ${{ steps.run-agent.outputs.generated || steps.use-existing.outputs.generated }}
 
     steps:
       - name: "Checkout repository"
@@ -70,19 +74,35 @@ jobs:
         with:
           fetch-depth: 1
 
+      # ── Decide whether to run the expensive LLM generation ────────────────
+      - name: "Check if web app source already exists"
+        id: check-existing
+        run: |
+          if [ -f "web_app/package.json" ] && [ "${{ github.event.inputs.force_regenerate }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "✅  web_app/package.json found — skipping agent, using committed source."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "🤖  Running agent.py to generate web app from Claude AI..."
+          fi
+
+      # ── Path A: run agent.py (needs ANTHROPIC_API_KEY) ────────────────────
       - name: "Set up Python 3.11"
+        if: steps.check-existing.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: "Install Python dependencies"
+        if: steps.check-existing.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: "Run generator agent"
         id: run-agent
+        if: steps.check-existing.outputs.skip != 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -95,21 +115,28 @@ jobs:
           echo "generated=true" >> "$GITHUB_OUTPUT"
 
       - name: "Show generation log (last 60 lines)"
-        if: always()
+        if: steps.check-existing.outputs.skip != 'true'
         run: tail -60 agent.log || true
 
-      # Upload the generated source tree as an artifact so the build job
-      # can download it without re-running the expensive LLM calls.
-      - name: "Upload generated web app source"
+      # ── Path B: reuse committed web_app/ ──────────────────────────────────
+      - name: "Use existing web app source"
+        id: use-existing
+        if: steps.check-existing.outputs.skip == 'true'
+        run: |
+          echo "Using committed web_app/ source as-is."
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+
+      # ── Upload the source tree as an artifact for the build job ───────────
+      - name: "Upload web app source artifact"
         uses: actions/upload-artifact@v4
         with:
           name: "web-app-source-${{ github.run_id }}"
           path: "web_app/"
           retention-days: 7
 
-      # Optionally commit the generated source back into the repo
-      # so it can be inspected, forked, or modified.
+      # ── Optionally commit regenerated source back into the repo ───────────
       - name: "Commit generated source to repository"
+        if: steps.check-existing.outputs.skip != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -130,12 +157,11 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
-        # Pull the freshly-committed source if the generate job pushed it
         with:
           ref: ${{ github.ref }}
           fetch-depth: 1
 
-      - name: "Download generated web app source"
+      - name: "Download web app source artifact"
         uses: actions/download-artifact@v4
         with:
           name: "web-app-source-${{ github.run_id }}"
@@ -156,7 +182,6 @@ jobs:
         working-directory: web_app
         run: npm run build
         env:
-          # Ensures Vite uses relative base paths (set in vite.config.js too)
           VITE_BASE_URL: "./"
 
       - name: "Show build output summary"
