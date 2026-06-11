@@ -23,6 +23,21 @@ function getConflicts(employeeName, task, tasks, selectedDate) {
   return result;
 }
 
+function xAxisCfg(dateObj, nextDay, fontColor, gridColor, showLabels) {
+  return {
+    type: 'date',
+    range: [dateObj.getTime(), nextDay.getTime()],
+    tickformat: '%H:%M',
+    dtick: 3600000 * 2,
+    gridcolor: gridColor,
+    tickfont: { color: fontColor, size: 11 },
+    showticklabels: showLabels,
+    showgrid: !showLabels,
+    zeroline: false,
+    fixedrange: true,
+  };
+}
+
 // Replicates GanttChart visual style for unassigned tasks
 function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
   const dateObj = new Date(selectedDate + 'T00:00:00');
@@ -81,69 +96,81 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
 
   const ROW_PX     = 26;
   const chartH     = Math.max(200, rowCount * ROW_PX + 110);
-  const containerH = Math.min(chartH, 420);
+  const containerH = Math.min(chartH, 380);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
   const plotBg    = isDark ? '#1a1a2e' : '#FFF7ED';
+  const borderClr = isDark ? '#2d2d2d' : '#f0f0f0';
+
+  const ML = 140;
 
   return (
-    <div
-      style={{
-        height: containerH,
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        border: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`,
-        borderRadius: 8,
-        marginBottom: 16,
-      }}
-    >
-      <Plot
-        data={traces}
-        layout={{
-          height: chartH,
-          barmode: 'overlay',
-          bargap: 0.15,
-          showlegend: true,
-          margin: { l: 140, r: 16, t: 52, b: 50 },
-          xaxis: {
-            type: 'date',
-            range: [dateObj.getTime(), nextDay.getTime()],
-            tickformat: '%H:%M',
-            dtick: 3600000 * 2,
-            gridcolor: gridColor,
-            tickfont: { color: fontColor },
-            mirror: 'allticks',  // time labels at top AND bottom → top stays visible on scroll
-            showline: true,
-          },
-          yaxis: {
-            categoryarray: yOrderBottomUp,
-            categoryorder: 'array',
-            tickfont: { size: 11, color: fontColor },
-            automargin: false,
-            gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
-          },
-          legend: {
-            orientation: 'h',
-            y: -0.08,
-            yanchor: 'top',
-            font: { size: 11, color: fontColor },
-          },
-          hoverlabel: { font: { size: 12 }, namelength: -1 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: plotBg,
-          font: { color: fontColor },
-        }}
-        config={{
-          responsive: true,
-          displayModeBar: true,
-          modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
-          scrollZoom: false,
-          toImageButtonOptions: { format: 'png', scale: 2 },
-        }}
-        style={{ width: '100%' }}
-        useResizeHandler
-      />
+    <div style={{ border: `1px solid ${borderClr}`, borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+
+      {/* Sticky time ruler */}
+      <div style={{ background: plotBg, borderBottom: `1px solid ${borderClr}` }}>
+        <Plot
+          data={[]}
+          layout={{
+            height: 44,
+            margin: { l: ML, r: 16, t: 6, b: 28 },
+            xaxis: xAxisCfg(dateObj, nextDay, fontColor, gridColor, true),
+            yaxis: { visible: false, fixedrange: true },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            showlegend: false,
+          }}
+          config={{ responsive: true, displayModeBar: false, staticPlot: true }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+      </div>
+
+      {/* Scrollable bars */}
+      <div style={{ height: containerH, overflowY: 'auto', overflowX: 'hidden' }}>
+        <Plot
+          data={traces}
+          layout={{
+            height: chartH,
+            barmode: 'overlay',
+            bargap: 0.15,
+            showlegend: true,
+            margin: { l: ML, r: 16, t: 4, b: 54 },
+            xaxis: {
+              ...xAxisCfg(dateObj, nextDay, fontColor, gridColor, false),
+              showgrid: true,
+              fixedrange: false,
+            },
+            yaxis: {
+              categoryarray: yOrderBottomUp,
+              categoryorder: 'array',
+              tickfont: { size: 11, color: fontColor },
+              automargin: false,
+              gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
+            },
+            legend: {
+              orientation: 'h',
+              y: -0.06,
+              yanchor: 'top',
+              font: { size: 11, color: fontColor },
+            },
+            hoverlabel: { font: { size: 12 }, namelength: -1 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: plotBg,
+            font: { color: fontColor },
+          }}
+          config={{
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+            scrollZoom: false,
+            toImageButtonOptions: { format: 'png', scale: 2 },
+          }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+      </div>
     </div>
   );
 }

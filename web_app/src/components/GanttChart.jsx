@@ -7,6 +7,22 @@ function fmt(d) {
 
 const SEP = '—';
 
+// Shared x-axis config used in both the header ruler and the main chart
+function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels) {
+  return {
+    type: 'date',
+    range: [dateObj.getTime(), nextDay.getTime()],
+    tickformat: '%H:%M',
+    dtick: 3600000 * 2,
+    gridcolor: gridColor,
+    tickfont: { color: fontColor, size: 11 },
+    showticklabels: showLabels,
+    showgrid: showLabels ? false : true,   // gridlines only in main chart
+    zeroline: false,
+    fixedrange: true,
+  };
+}
+
 export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
   const plotData = useMemo(() => {
     const filtered = tasks.filter(t =>
@@ -109,66 +125,86 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
   const dateObj = new Date(selectedDate + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
 
-  const ROW_PX    = 26;
-  const chartH    = Math.max(300, rowCount * ROW_PX + 120);
-  const containerH = Math.min(chartH, 580);
+  const ROW_PX     = 26;
+  const chartH     = Math.max(300, rowCount * ROW_PX + 120);
+  const containerH = Math.min(chartH, 560);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
   const plotBg    = isDark ? '#1a1a2e' : '#FAFAFA';
+  const borderClr = isDark ? '#2d2d2d' : '#f0f0f0';
+
+  // Left margin must match in BOTH charts so gridlines align with the time ruler
+  const ML = 210;
 
   return (
-    <div
-      style={{ height: containerH, overflowY: 'auto', overflowX: 'hidden', border: '1px solid ' + (isDark ? '#2d2d2d' : '#f0f0f0'), borderRadius: 8 }}
-    >
-      <Plot
-        data={traces}
-        layout={{
-          height: chartH,
-          barmode: 'overlay',
-          bargap: 0.15,
-          showlegend: true,
-          margin: { l: 210, r: 16, t: 52, b: 50 },
-          xaxis: {
-            type: 'date',
-            range: [dateObj.getTime(), nextDay.getTime()],
-            tickformat: '%H:%M',
-            dtick: 3600000 * 2,
-            gridcolor: gridColor,
-            tickfont: { color: fontColor },
-            mirror: 'allticks',   // time labels at top AND bottom → top stays visible on scroll
-            showline: true,
-          },
-          yaxis: {
-            categoryarray: yOrderBottomUp,
-            categoryorder: 'array',
-            tickvals: yTickVals,
-            ticktext: yTickText,
-            tickfont: { size: 11, color: fontColor },
-            automargin: false,
-            gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
-          },
-          legend: {
-            orientation: 'h',
-            y: -0.08,
-            yanchor: 'top',
-            font: { size: 11, color: fontColor },
-          },
-          hoverlabel: { font: { size: 12 }, namelength: -1 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: plotBg,
-          font: { color: fontColor },
-        }}
-        config={{
-          responsive: true,
-          displayModeBar: true,
-          modeBarButtonsToRemove: ['select2d','lasso2d','autoScale2d'],
-          scrollZoom: false,
-          toImageButtonOptions: { format: 'png', scale: 2 },
-        }}
-        style={{ width: '100%' }}
-        useResizeHandler
-      />
+    <div style={{ border: `1px solid ${borderClr}`, borderRadius: 8, overflow: 'hidden' }}>
+
+      {/* ── Sticky time ruler ── stays visible while scrolling the bars ─────── */}
+      <div style={{ background: plotBg, borderBottom: `1px solid ${borderClr}` }}>
+        <Plot
+          data={[]}
+          layout={{
+            height: 44,
+            margin: { l: ML, r: 16, t: 6, b: 28 },
+            xaxis: xAxisConfig(dateObj, nextDay, fontColor, gridColor, true),
+            yaxis: { visible: false, fixedrange: true },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            showlegend: false,
+          }}
+          config={{ responsive: true, displayModeBar: false, staticPlot: true }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+      </div>
+
+      {/* ── Scrollable bars ─────────────────────────────────────────────────── */}
+      <div style={{ height: containerH, overflowY: 'auto', overflowX: 'hidden' }}>
+        <Plot
+          data={traces}
+          layout={{
+            height: chartH,
+            barmode: 'overlay',
+            bargap: 0.15,
+            showlegend: true,
+            margin: { l: ML, r: 16, t: 4, b: 54 },
+            xaxis: {
+              ...xAxisConfig(dateObj, nextDay, fontColor, gridColor, false),
+              showgrid: true,
+              fixedrange: false,   // allow zoom/pan in main chart
+            },
+            yaxis: {
+              categoryarray: yOrderBottomUp,
+              categoryorder: 'array',
+              tickvals: yTickVals,
+              ticktext: yTickText,
+              tickfont: { size: 11, color: fontColor },
+              automargin: false,
+              gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
+            },
+            legend: {
+              orientation: 'h',
+              y: -0.06,
+              yanchor: 'top',
+              font: { size: 11, color: fontColor },
+            },
+            hoverlabel: { font: { size: 12 }, namelength: -1 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: plotBg,
+            font: { color: fontColor },
+          }}
+          config={{
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['select2d','lasso2d','autoScale2d'],
+            scrollZoom: false,
+            toImageButtonOptions: { format: 'png', scale: 2 },
+          }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+      </div>
     </div>
   );
 }
