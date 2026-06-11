@@ -1,21 +1,36 @@
 import { useState, useMemo } from 'react';
-import { Table, Select, Button, Empty, Tag, Space } from 'antd';
+import { Table, Select, Button, Empty, Tag, Space, Modal, Alert, Typography } from 'antd';
 import Plot from 'react-plotly.js';
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// Replicates the GanttChart visual style for unassigned tasks
+// Check whether assigning `task` to `employeeName` creates a time conflict.
+// Returns array of conflicting tasks (empty = no conflict).
+function getConflicts(employeeName, task, tasks, selectedDate) {
+  const empTasks = tasks.filter(t =>
+    t.date === selectedDate &&
+    t.employee === employeeName &&
+    t.id !== task.id
+  );
+  const result = [];
+  for (const et of empTasks) {
+    // Complementary roles on same flight → overlap allowed
+    if (et.flight === task.flight && et.flight !== 'Рейс не указ.' && et.name !== task.name) continue;
+    if (et.start < task.end && task.start < et.end) result.push(et);
+  }
+  return result;
+}
+
+// Replicates GanttChart visual style for unassigned tasks
 function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
   const dateObj = new Date(selectedDate + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
 
   const { traces, yOrderBottomUp, rowCount } = useMemo(() => {
-    // Build Y-axis: one row per flight, sorted alphabetically
     const flightSet = [...new Set(unassigned.map(t => t.flight))].sort();
 
-    // Group traces by task name for consistent coloring + legend
     const byName = {};
     for (const t of unassigned) {
       if (!byName[t.name]) byName[t.name] = [];
@@ -64,8 +79,8 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
     };
   }, [unassigned, colorMap]);
 
-  const ROW_PX    = 26;
-  const chartH    = Math.max(200, rowCount * ROW_PX + 110);
+  const ROW_PX     = 26;
+  const chartH     = Math.max(200, rowCount * ROW_PX + 110);
   const containerH = Math.min(chartH, 420);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
@@ -90,7 +105,7 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
           barmode: 'overlay',
           bargap: 0.15,
           showlegend: true,
-          margin: { l: 140, r: 16, t: 8, b: 50 },
+          margin: { l: 140, r: 16, t: 52, b: 50 },
           xaxis: {
             type: 'date',
             range: [dateObj.getTime(), nextDay.getTime()],
@@ -98,6 +113,8 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
             dtick: 3600000 * 2,
             gridcolor: gridColor,
             tickfont: { color: fontColor },
+            mirror: 'allticks',  // time labels at top AND bottom → top stays visible on scroll
+            showline: true,
           },
           yaxis: {
             categoryarray: yOrderBottomUp,
@@ -133,6 +150,7 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
 
 export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap, onAssign, isDark }) {
   const [selections, setSelections] = useState({});
+  const [conflictInfo, setConflictInfo] = useState(null);
 
   const unassigned = useMemo(
     () => tasks.filter(t => t.date === selectedDate && t.employee === 'Не назначено'),
@@ -141,6 +159,24 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
 
   if (unassigned.length === 0) {
     return <Empty description="Бэклог пуст — все задачи распределены" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+
+  function handleAssignClick(task, sel) {
+    const conflicts = getConflicts(sel, task, tasks, selectedDate);
+    if (conflicts.length === 0) {
+      onAssign(task.id, sel, true);
+      setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
+    } else {
+      // Build list of alternatives: qualified, in shift, no conflict
+      const alternatives = staffList.filter(s =>
+        s.name !== sel &&
+        s.quals.includes(task.reqType) &&
+        s.shiftStart <= task.start &&
+        task.end <= s.shiftEnd &&
+        getConflicts(s.name, task, tasks, selectedDate).length === 0
+      );
+      setConflictInfo({ task, sel, conflicts, alternatives });
+    }
   }
 
   const columns = [
@@ -196,12 +232,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
               type="primary"
               size="small"
               disabled={!sel}
-              onClick={() => {
-                if (sel) {
-                  onAssign(task.id, sel, true);
-                  setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
-                }
-              }}
+              onClick={() => sel && handleAssignClick(task, sel)}
             >
               Назначить
             </Button>
@@ -219,6 +250,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
         selectedDate={selectedDate}
         isDark={isDark}
       />
+
       <Table
         dataSource={unassigned}
         columns={columns}
@@ -227,6 +259,74 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
         pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `Всего: ${total}` }}
         scroll={{ x: 600 }}
       />
+
+      {/* Conflict warning modal */}
+      <Modal
+        title={<span style={{ color: '#ff4d4f' }}>⚠️ Конфликт расписания</span>}
+        open={!!conflictInfo}
+        onCancel={() => setConflictInfo(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setConflictInfo(null)}>
+            Отмена
+          </Button>,
+          <Button
+            key="force"
+            type="primary"
+            danger
+            onClick={() => {
+              onAssign(conflictInfo.task.id, conflictInfo.sel, true);
+              setSelections(prev => { const n = { ...prev }; delete n[conflictInfo.task.id]; return n; });
+              setConflictInfo(null);
+            }}
+          >
+            Назначить принудительно
+          </Button>,
+        ]}
+      >
+        <Alert
+          type="error"
+          showIcon
+          message={`Сотрудник ${conflictInfo?.sel} занят в это время`}
+          description={
+            <ul style={{ marginTop: 4, paddingLeft: 16, marginBottom: 0 }}>
+              {conflictInfo?.conflicts.map(c => (
+                <li key={c.id}>
+                  <b>{c.name}</b> · {fmt(c.start)}–{fmt(c.end)} · рейс {c.flight}
+                </li>
+              ))}
+            </ul>
+          }
+          style={{ marginBottom: 16 }}
+        />
+
+        {conflictInfo?.alternatives.length > 0 ? (
+          <div>
+            <Typography.Text strong>Свободные сотрудники с нужной квалификацией:</Typography.Text>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+              {conflictInfo.alternatives.map(alt => (
+                <Button
+                  key={alt.name}
+                  size="small"
+                  onClick={() => {
+                    onAssign(conflictInfo.task.id, alt.name, true);
+                    setSelections(prev => { const n = { ...prev }; delete n[conflictInfo.task.id]; return n; });
+                    setConflictInfo(null);
+                  }}
+                >
+                  {alt.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            message="Нет свободных альтернатив"
+            description="Все квалифицированные сотрудники заняты в это время. Можно назначить принудительно."
+          />
+        )}
+      </Modal>
     </div>
   );
 }
