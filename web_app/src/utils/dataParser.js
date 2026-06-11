@@ -59,7 +59,21 @@ function inferQual(notes) {
 }
 
 export function parseCSV(csvText) {
-  const result = Papa.parse(csvText, {
+  // Some exports prepend several metadata rows before the actual column-header row.
+  // Find the first line that looks like the real header (contains key column names).
+  const lines = csvText.split(/\r?\n/);
+  let headerIdx = lines.findIndex(
+    l => l.includes('Дата рейса') && l.includes('Начало задач')
+  );
+  if (headerIdx < 0) {
+    // Fallback: also accept a line with just the most critical column
+    headerIdx = lines.findIndex(l => l.includes('Начало задач'));
+  }
+  const cleanedText = headerIdx > 0
+    ? lines.slice(headerIdx).join('\n')
+    : csvText;
+
+  const result = Papa.parse(cleanedText, {
     header: true,
     skipEmptyLines: true,
     encoding: 'UTF-8',
