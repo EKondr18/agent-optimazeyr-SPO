@@ -1,0 +1,194 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .github/workflows/generate-webapp.yml
+#
+# SPO Optimizer — Generate React Web App & Deploy to GitHub Pages
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Triggers:
+#   • Push to `main` that touches agent.py, source files, or requirements.txt
+#   • Manual dispatch (Actions tab → "Run workflow")
+#
+# Required GitHub Secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY   — your Anthropic API key (sk-ant-…)
+#
+# Required GitHub Pages settings (Settings → Pages):
+#   Source: "GitHub Actions"
+#
+# Pipeline stages:
+#   1. generate  — Run agent.py to produce the React source in web_app/
+#   2. build     — npm ci + npm run build
+#   3. deploy    — Push dist/ to GitHub Pages
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Generate & Deploy SPO Optimizer"
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "agent.py"
+      - "requirements.txt"
+      - "source/**"
+      - ".github/workflows/generate-webapp.yml"
+
+  # Allow manual re-runs from the Actions tab
+  workflow_dispatch:
+    inputs:
+      force_regenerate:
+        description: "Force full regeneration (ignore cache)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+# ── Permissions ───────────────────────────────────────────────────────────────
+permissions:
+  contents: write       # needed to commit generated files back to the repo
+  pages: write          # needed for GitHub Pages deployment
+  id-token: write       # needed for OIDC token used by deploy-pages
+
+# ── Prevent parallel deployments ─────────────────────────────────────────────
+concurrency:
+  group: "pages-${{ github.ref }}"
+  cancel-in-progress: false
+
+# ═════════════════════════════════════════════════════════════════════════════
+jobs:
+
+  # ── JOB 1: Generate the React web app source using Claude AI ──────────────
+  generate:
+    name: "🤖 Generate Web App (Claude AI)"
+    runs-on: ubuntu-latest
+
+    outputs:
+      # Pass a flag to downstream jobs so they can skip if generation was cached
+      generated: ${{ steps.run-agent.outputs.generated }}
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Set up Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: "Install Python dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: "Run generator agent"
+        id: run-agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Starting agent.py …"
+          python agent.py \
+            --source source/notebook.ipynb \
+            --data   source/sample_data.csv \
+            --output web_app \
+            --verbose
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+
+      - name: "Show generation log (last 60 lines)"
+        if: always()
+        run: tail -60 agent.log || true
+
+      # Upload the generated source tree as an artifact so the build job
+      # can download it without re-running the expensive LLM calls.
+      - name: "Upload generated web app source"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "web-app-source-${{ github.run_id }}"
+          path: "web_app/"
+          retention-days: 7
+
+      # Optionally commit the generated source back into the repo
+      # so it can be inspected, forked, or modified.
+      - name: "Commit generated source to repository"
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add web_app/ agent.log || true
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — source is unchanged."
+          else
+            git commit -m "chore: regenerate web app [skip ci]"
+            git push
+          fi
+
+  # ── JOB 2: Build the React app with Vite ──────────────────────────────────
+  build:
+    name: "🏗️ Build React App"
+    needs: generate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+        # Pull the freshly-committed source if the generate job pushed it
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+
+      - name: "Download generated web app source"
+        uses: actions/download-artifact@v4
+        with:
+          name: "web-app-source-${{ github.run_id }}"
+          path: "web_app/"
+
+      - name: "Set up Node.js 20"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "web_app/package.json"
+
+      - name: "Install Node dependencies"
+        working-directory: web_app
+        run: npm install
+
+      - name: "Build production bundle"
+        working-directory: web_app
+        run: npm run build
+        env:
+          # Ensures Vite uses relative base paths (set in vite.config.js too)
+          VITE_BASE_URL: "./"
+
+      - name: "Show build output summary"
+        working-directory: web_app
+        run: |
+          echo "── Build output ──────────────────────────"
+          du -sh dist/
+          find dist/ -type f | sort
+
+      - name: "Configure GitHub Pages"
+        uses: actions/configure-pages@v5
+
+      - name: "Upload build artefact to GitHub Pages"
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "web_app/dist"
+
+  # ── JOB 3: Deploy to GitHub Pages ─────────────────────────────────────────
+  deploy:
+    name: "🚀 Deploy to GitHub Pages"
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: "github-pages"
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: "Deploy"
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: "Print live URL"
+        run: |
+          echo "✅ Deployed!  ${{ steps.deploy.outputs.page_url }}"
