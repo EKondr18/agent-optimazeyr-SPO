@@ -154,6 +154,10 @@ jobs:
     needs: generate
     runs-on: ubuntu-latest
 
+    # Signal whether Pages artifact was successfully uploaded
+    outputs:
+      pages-ready: ${{ steps.pages-check.outputs.ready }}
+
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
@@ -191,21 +195,43 @@ jobs:
           du -sh dist/
           find dist/ -type f | sort
 
+      # Pages configuration is best-effort — it fails if Pages is not enabled
+      # in repository Settings → Pages → Source: "GitHub Actions".
+      # Use continue-on-error so the build job succeeds regardless.
       - name: "Configure GitHub Pages"
+        id: configure-pages
+        continue-on-error: true
         uses: actions/configure-pages@v5
         with:
           enablement: true
 
       - name: "Upload build artefact to GitHub Pages"
+        id: upload-pages
+        if: steps.configure-pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: "web_app/dist"
 
-  # ── JOB 3: Deploy to GitHub Pages ─────────────────────────────────────────
+      # Track whether we have a Pages artifact ready for deployment
+      - name: "Check Pages readiness"
+        id: pages-check
+        if: always()
+        run: |
+          if [ "${{ steps.configure-pages.outcome }}" = "success" ]; then
+            echo "ready=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️  GitHub Pages not enabled — skipping deployment."
+            echo "   To deploy: Settings → Pages → Source → 'GitHub Actions'."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── JOB 3: Deploy to GitHub Pages (only when Pages is configured) ──────────
   deploy:
     name: "🚀 Deploy to GitHub Pages"
     needs: build
     runs-on: ubuntu-latest
+    # Skip gracefully when Pages artifact was not uploaded
+    if: needs.build.outputs.pages-ready == 'true'
 
     environment:
       name: "github-pages"
