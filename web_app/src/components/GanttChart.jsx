@@ -72,7 +72,15 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
       byName[t.name].push(t);
     }
 
-    const traces = Object.entries(byName).map(([name, taskList]) => {
+    // Render shorter/point-like task types last so they paint on top of wider
+    // bars they overlap with — Plotly's hover tie-break favors the
+    // last-rendered trace, so this keeps hover matching what's visually on top.
+    const avgDuration = list => list.reduce((sum, t) => sum + (t.end - t.start), 0) / list.length;
+    const orderedEntries = Object.entries(byName).sort(
+      ([, a], [, b]) => avgDuration(b) - avgDuration(a)
+    );
+
+    const traces = orderedEntries.map(([name, taskList]) => {
       const color = colorMap[name] || '#888';
       return {
         type: 'bar',
@@ -189,6 +197,8 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
               yanchor: 'top',
               font: { size: 11, color: fontColor },
             },
+            hovermode: 'closest',
+            hoverdistance: 2,
             hoverlabel: { font: { size: 12 }, namelength: -1 },
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: plotBg,
