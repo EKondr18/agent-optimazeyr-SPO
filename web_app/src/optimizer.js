@@ -38,6 +38,88 @@ function commit(result, assignedTasks, taskId, employeeName) {
   assignedTasks[employeeName].push(result[idx]);
 }
 
+// A delay just shifted some tasks' times. If a delayed task is locked to an
+// employee and now overlaps another locked task of that same employee, the
+// dispatcher's manual pin can no longer be honoured as-is — relocate the
+// delayed task to a different qualified employee, same scoring/fallback
+// logic the optimizer uses for unassigned ("Свободно") tasks. Untouched
+// locked tasks (not delayed) are left alone, since their conflicts — if
+// any — were a deliberate dispatcher override (force-assign).
+export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds) {
+  const result = tasks.map(t => ({ ...t }));
+  if (!delayedTaskIds || delayedTaskIds.length === 0) return { tasks: result, changes: [] };
+
+  const staff = staffDB[selectedDate] || [];
+  if (staff.length === 0) return { tasks: result, changes: [] };
+
+  const assignedTasks = {};
+  for (const s of staff) assignedTasks[s.name] = [];
+  for (const t of result) {
+    if (t.date === selectedDate && t.employee !== 'Не назначено') {
+      if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
+      assignedTasks[t.employee].push(t);
+    }
+  }
+
+  const delayedSet = new Set(delayedTaskIds);
+  const changes = [];
+
+  for (const task of result) {
+    if (task.date !== selectedDate || !task.isLocked || !delayedSet.has(task.id)) continue;
+    if (task.employee === 'Не назначено') continue;
+
+    const currentEmp = task.employee;
+    const empTasks = (assignedTasks[currentEmp] || []).filter(t => t.id !== task.id);
+    const conflictsWithLocked = empTasks.some(t => {
+      if (!t.isLocked) return false;
+      if (t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name) return false;
+      return tasksOverlap(t, task);
+    });
+    if (!conflictsWithLocked) continue;
+
+    assignedTasks[currentEmp] = empTasks;
+
+    // Pass A: best-scoring qualified employee, in shift, no conflicts
+    let bestStaff = null, bestScore = null;
+    for (const s of staff) {
+      if (s.name === currentEmp) continue;
+      if (!s.quals.includes(task.reqType)) continue;
+      if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
+      if (hasConflict(assignedTasks[s.name] || [], task)) continue;
+      const score = scoreEmployee(s, assignedTasks, task);
+      if (!bestScore || score.dist < bestScore.dist ||
+          (score.dist === bestScore.dist && score.load < bestScore.load)) {
+        bestScore = score; bestStaff = s;
+      }
+    }
+
+    // Pass B: relax shift constraint (overtime), still no conflicts
+    if (!bestStaff) {
+      let bestLoad = Infinity;
+      for (const s of staff) {
+        if (s.name === currentEmp) continue;
+        if (!s.quals.includes(task.reqType)) continue;
+        if (hasConflict(assignedTasks[s.name] || [], task)) continue;
+        const load = (assignedTasks[s.name] || []).length;
+        if (load < bestLoad) { bestLoad = load; bestStaff = s; }
+      }
+    }
+
+    const idx = result.findIndex(t => t.id === task.id);
+    if (bestStaff) {
+      result[idx] = { ...result[idx], employee: bestStaff.name };
+      if (!assignedTasks[bestStaff.name]) assignedTasks[bestStaff.name] = [];
+      assignedTasks[bestStaff.name].push(result[idx]);
+      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: bestStaff.name, backlog: false });
+    } else {
+      result[idx] = { ...result[idx], employee: 'Не назначено', isLocked: false };
+      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: null, backlog: true });
+    }
+  }
+
+  return { tasks: result, changes };
+}
+
 export function runOptimizer(tasks, staffDB, selectedDate) {
   let result = tasks.map(t =>
     t.date === selectedDate && !t.isLocked
