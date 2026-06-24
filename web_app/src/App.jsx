@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ConfigProvider, Layout, Button, Select, Switch, Input,
   Checkbox, Space, Drawer, Collapse, Typography, Alert,
-  Spin, Empty, theme as antdTheme, Badge, Divider
+  Spin, Empty, theme as antdTheme, Badge, Divider, message
 } from 'antd';
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
@@ -10,7 +10,7 @@ import {
   UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
 } from '@ant-design/icons';
 import { parseCSV } from './utils/dataParser';
-import { runOptimizer } from './optimizer';
+import { runOptimizer, reassignDelayedConflicts } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -227,6 +227,7 @@ export default function App() {
   }
 
   function handleApplyDelays(delayMap) {
+    const delayedIds = Object.keys(delayMap).filter(id => (delayMap[id] ?? 0) > 0);
     let updated = tasksDB.map(t => {
       const minutes = delayMap[t.id] ?? 0;
       return {
@@ -235,6 +236,17 @@ export default function App() {
         end: new Date(t.baseEnd.getTime() + minutes * 60000),
       };
     });
+
+    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds);
+    updated = resolved;
+    for (const c of changes) {
+      if (c.backlog) {
+        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой закреплённой задачей — свободных сотрудников нет, задача возвращена в бэклог`);
+      } else {
+        message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт с закреплённой задачей)`);
+      }
+    }
+
     if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate);
     setTasksDB(updated);
   }
