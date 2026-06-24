@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     nodePolyfills({ include: ['buffer', 'stream', 'assert', 'util', 'process'] }),
   ],
-  base: '/',
+  base: process.env.VITE_BASE_URL || '/',
   build: {
     outDir: 'dist',
     sourcemap: false,
