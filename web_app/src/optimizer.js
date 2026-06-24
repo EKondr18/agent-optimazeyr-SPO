@@ -1,17 +1,31 @@
 import { getPosDistance } from './utils/posDistance';
 
+const MIN_TRANSITION_MS = 5 * 60000;
+const MIN_TRANSITION_POS_DIST = 5;
+
 function tasksOverlap(a, b) {
   return a.start < b.end && b.start < a.end;
 }
 
+// Back-to-back tasks at meaningfully different positions need walking/driving
+// time between them — without it the assignment isn't physically realistic.
+function hasInsufficientGap(a, b) {
+  const earlier = a.start <= b.start ? a : b;
+  const later = a.start <= b.start ? b : a;
+  if (later.start < earlier.end) return false; // overlap is handled by tasksOverlap
+  const gap = later.start - earlier.end;
+  return gap < MIN_TRANSITION_MS && getPosDistance(earlier.pos, later.pos) >= MIN_TRANSITION_POS_DIST;
+}
+
+function conflictsWith(a, b) {
+  // Same flight + different task name = complementary roles on same plane → overlap allowed
+  // Same flight + same task name = 2 identical tasks → need 2 different people, NO exemption
+  if (a.flight === b.flight && a.flight !== 'Рейс не указ.' && a.name !== b.name) return false;
+  return tasksOverlap(a, b) || hasInsufficientGap(a, b);
+}
+
 function hasConflict(empTasks, newTask) {
-  for (const t of empTasks) {
-    // Same flight + different task name = complementary roles on same plane → overlap allowed
-    // Same flight + same task name = 2 identical tasks → need 2 different people, NO exemption
-    if (t.flight === newTask.flight && t.flight !== 'Рейс не указ.' && t.name !== newTask.name) continue;
-    if (tasksOverlap(t, newTask)) return true;
-  }
-  return false;
+  return empTasks.some(t => conflictsWith(t, newTask));
 }
 
 function getLastTaskPos(empTasks, beforeTime) {
@@ -70,11 +84,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
 
     const currentEmp = task.employee;
     const empTasks = (assignedTasks[currentEmp] || []).filter(t => t.id !== task.id);
-    const conflictsWithLocked = empTasks.some(t => {
-      if (!t.isLocked) return false;
-      if (t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name) return false;
-      return tasksOverlap(t, task);
-    });
+    const conflictsWithLocked = empTasks.some(t => t.isLocked && conflictsWith(t, task));
     if (!conflictsWithLocked) continue;
 
     assignedTasks[currentEmp] = empTasks;
@@ -187,10 +197,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
 
       const empTasks = assignedTasks[s.name] || [];
-      const conflicts = empTasks.filter(ct => {
-        if (ct.flight === task.flight && task.flight !== 'Рейс не указ.' && ct.name !== task.name) return false;
-        return tasksOverlap(ct, task);
-      });
+      const conflicts = empTasks.filter(ct => conflictsWith(ct, task));
 
       if (conflicts.length === 0) {
         commit(result, assignedTasks, task.id, s.name);
