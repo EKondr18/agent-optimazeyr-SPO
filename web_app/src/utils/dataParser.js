@@ -223,3 +223,156 @@ export function parseCSV(csvText) {
 
   return { tasks, staffDB, colorMap };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// JSON export parser (tb_shifts / tb_resources / tb_relation_resource_qualification
+// / orders) — replaces parseCSV once the corporate system feeds the app directly.
+//
+// Confirmed full exports this parser consumes: orders, tb_shifts, tb_resources,
+// tb_relation_resource_qualification. tb_res_qual (the qualification dictionary)
+// has NOT been received in full — only single example records — so aircraft-type
+// codes can't be resolved through it yet. As a bridge, expandQualCode() below
+// makes a resource's qualification set match both the bare code from
+// tb_relation_resource_qualification (e.g. "A-320") and the SPO_-prefixed form
+// used in orders' req_qual_vector (e.g. "SPO_A-320"), since every bare code
+// observed so far is the same string with "SPO_" stripped. Replace this with a
+// real tb_res_qual-based lookup once that table's full export arrives.
+//
+// Also unresolved (flagged, not guessed): no flights reference table, so
+// task.flight falls back to the raw flight_ref id; no human-readable name for
+// flight_event_ref codes, so task.name uses the code as-is.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function expandQualCode(rawCode) {
+  const code = (rawCode || '').trim();
+  if (!code) return [];
+  return code.startsWith('SPO_') ? [code] : [code, `SPO_${code}`];
+}
+
+function displayName(resource) {
+  if (!resource) return null;
+  return resource.additional_name || resource.name || resource.internal_id || null;
+}
+
+function buildResourceMap(resources) {
+  const map = new Map();
+  for (const r of resources || []) {
+    map.set(r.internal_id, r);
+  }
+  return map;
+}
+
+function buildQualMap(resourceQualifications) {
+  const map = new Map();
+  for (const rel of resourceQualifications || []) {
+    if (!map.has(rel.resource_ref)) map.set(rel.resource_ref, new Set());
+    const set = map.get(rel.resource_ref);
+    for (const code of expandQualCode(rel.qualification_ref)) set.add(code);
+  }
+  return map;
+}
+
+function parseOrders(orders, resourceMap) {
+  const colorIndex = {};
+  let colorCounter = 0;
+  const tasks = [];
+
+  for (const o of orders || []) {
+    const start = o.start_time ? new Date(o.start_time) : null;
+    const end = o.end_time ? new Date(o.end_time) : null;
+    if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+
+    const name = o.flight_event_ref || o.order_rule_ref || 'Задача';
+    const reqType = Array.isArray(o.req_qual_vector) && o.req_qual_vector.length > 0
+      ? o.req_qual_vector[0]
+      : null;
+    const pos = o.start_loc_ref || 'ПЕРРОН';
+    const flight = o.flight_ref || o.outbound_flight_ref || o.inbound_flight_ref || 'Рейс не указ.';
+
+    if (!(name in colorIndex)) {
+      colorIndex[name] = COLOR_PALETTE[colorCounter % COLOR_PALETTE.length];
+      colorCounter++;
+    }
+
+    const resource = o.res_assigned_to_ref ? resourceMap.get(o.res_assigned_to_ref) : null;
+    const employee = displayName(resource) || (o.res_assigned_to_ref ? o.res_assigned_to_ref : 'Не назначено');
+    const isLocked = Boolean(o.res_assigned_to_ref);
+
+    tasks.push({
+      id: o._id,
+      date: toYMD(start),
+      name,
+      flight,
+      pos,
+      zone: 'APRON',
+      baseStart: new Date(start),
+      baseEnd: new Date(end),
+      start: new Date(start),
+      end: new Date(end),
+      duration: Math.round((end - start) / 60000),
+      color: colorIndex[name],
+      reqType,
+      employee,
+      isLocked,
+      setupDuration: o.setup_duration ?? null,
+      clearupDuration: o.clearup_duration ?? null,
+      shiftAssignedToRef: o.shift_assigned_to_ref || null,
+    });
+  }
+
+  return tasks;
+}
+
+function parseShifts(shifts, resourceMap, qualMap) {
+  const staffDB = {};
+
+  for (const s of shifts || []) {
+    const resource = resourceMap.get(s.resource_ref);
+    // Only staff whose home department is SPO belong in this optimizer's pool.
+    if (!resource || resource.default_department_ref !== 'SPO') continue;
+
+    const shiftStart = s.scheduled_start ? new Date(s.scheduled_start) : null;
+    const shiftEnd = s.scheduled_end ? new Date(s.scheduled_end) : null;
+    if (!shiftStart || !shiftEnd) continue;
+
+    const quals = [...(qualMap.get(s.resource_ref) || [])];
+
+    const staffMember = {
+      name: displayName(resource) || resource.internal_id,
+      quals,
+      zone: 'APRON',
+      shiftStart,
+      shiftEnd,
+    };
+
+    const cur = new Date(shiftStart);
+    cur.setHours(0, 0, 0, 0);
+    const endDay = new Date(shiftEnd);
+    endDay.setHours(0, 0, 0, 0);
+
+    while (cur <= endDay) {
+      const dateKey = toYMD(cur);
+      if (!staffDB[dateKey]) staffDB[dateKey] = [];
+      const exists = staffDB[dateKey].some(m =>
+        m.name === staffMember.name && m.shiftStart.getTime() === shiftStart.getTime()
+      );
+      if (!exists) staffDB[dateKey].push(staffMember);
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  return staffDB;
+}
+
+export function parseJsonExport({ orders, shifts, resources, resourceQualifications }) {
+  const resourceMap = buildResourceMap(resources);
+  const qualMap = buildQualMap(resourceQualifications);
+
+  const tasks = parseOrders(orders, resourceMap);
+  const staffDB = parseShifts(shifts, resourceMap, qualMap);
+
+  const colorMap = {};
+  for (const t of tasks) colorMap[t.name] = t.color;
+
+  return { tasks, staffDB, colorMap };
+}
