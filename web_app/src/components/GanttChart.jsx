@@ -9,12 +9,16 @@ const SEP = '—';
 const ROW_PX = 30;
 
 // Shared x-axis config used in both the header ruler and the main chart
-function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels) {
+function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels, windowDays) {
   return {
     type: 'date',
     range: [dateObj.getTime(), nextDay.getTime()],
-    tickformat: '%H:%M',
-    dtick: 3600000 * 2,
+    // With more than one day on screen, break the tick label onto a second
+    // line showing the date — Plotly only renders that second line where
+    // the coarser unit (the day) actually changes, so it reads as a day
+    // separator rather than clutter on every tick.
+    tickformat: windowDays > 1 ? '%H:%M\n%d.%m' : '%H:%M',
+    dtick: 3600000 * (windowDays > 1 ? 4 : 2),
     gridcolor: gridColor,
     tickfont: { color: fontColor, size: 13 },
     showticklabels: showLabels,
@@ -24,12 +28,11 @@ function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels) {
   };
 }
 
-export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
+export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
   const [expanded, setExpanded] = useState(() => new Set());
 
   const plotData = useMemo(() => {
     const filtered = tasks.filter(t =>
-      t.date === selectedDate &&
       t.employee !== 'Не назначено' &&
       filterTypes.includes(t.name) &&
       (filterFlight === '' ||
@@ -50,14 +53,18 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
     // (yVal) it belongs to: employees with a single qualification, or
     // collapsed multi-qual employees, get ONE row carrying all their tasks;
     // an employee is only split into per-qualification sub-rows once the
-    // user expands them via the arrow.
+    // user expands them via the arrow. empRowRange tracks each employee's
+    // contiguous row block (top-down indices) so the shift-shading rect can
+    // span every sub-row when expanded.
     const yRowsTopDown = [];
     const empYVal = {}; // employee -> yVal to use when collapsed / single-qual
+    const empRowRange = {}; // employee -> [startIdx, endIdx] (top-down, inclusive)
 
     for (const emp of employees) {
       const types = [...empTypesMap[emp]].sort();
       const splittable = types.length > 1;
       const isExpanded = splittable && expanded.has(emp);
+      const startIdx = yRowsTopDown.length;
 
       if (!splittable) {
         empYVal[emp] = emp;
@@ -72,6 +79,8 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
           yRowsTopDown.push({ yVal: `${emp}${SEP}${reqType}`, label: reqType, isEmployee: false, hasArrow: false, indent: 1 });
         });
       }
+
+      empRowRange[emp] = [startIdx, yRowsTopDown.length - 1];
     }
 
     const taskYVal = t => {
@@ -81,6 +90,15 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
 
     const yOrder = yRowsTopDown.map(r => r.yVal);
     const yOrderBottomUp = [...yOrder].reverse();
+    const rowCount = yOrder.length;
+
+    // Convert each employee's top-down row block into the bottom-up numeric
+    // y-range Plotly's category axis actually uses (category i sits at
+    // numeric position i within categoryarray order).
+    const empRowRangeBU = {};
+    for (const [emp, [start, end]] of Object.entries(empRowRange)) {
+      empRowRangeBU[emp] = [rowCount - 1 - end, rowCount - 1 - start];
+    }
 
     const byName = {};
     for (const t of filtered) {
@@ -135,8 +153,28 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
 
     const legendEntries = orderedEntries.map(([name]) => ({ name, color: colorMap[name] || '#888' }));
 
-    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount: yOrder.length, legendEntries };
-  }, [tasks, colorMap, selectedDate, filterTypes, filterFlight, expanded]);
+    // Shift-duty shading — one faint rect per shift, spanning the employee's
+    // whole row block (so it still covers every sub-row once expanded).
+    const shiftShapes = staffShifts
+      .filter(s => empRowRangeBU[s.name])
+      .map(s => {
+        const [y0, y1] = empRowRangeBU[s.name];
+        return {
+          type: 'rect',
+          xref: 'x',
+          yref: 'y',
+          x0: s.shiftStart.getTime(),
+          x1: s.shiftEnd.getTime(),
+          y0: y0 - 0.42,
+          y1: y1 + 0.42,
+          fillcolor: isDark ? 'rgba(90,140,255,0.10)' : 'rgba(30,80,200,0.06)',
+          line: { width: 0 },
+          layer: 'below',
+        };
+      });
+
+    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount, legendEntries, shiftShapes };
+  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark]);
 
   function toggleEmployee(emp) {
     setExpanded(prev => {
@@ -154,10 +192,23 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
     );
   }
 
-  const { traces, yOrderBottomUp, rowsTopDown, rowCount, legendEntries } = plotData;
+  const { traces, yOrderBottomUp, rowsTopDown, rowCount, legendEntries, shiftShapes } = plotData;
 
   const dateObj = new Date(selectedDate + 'T00:00:00');
-  const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
+  const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
+
+  // Dashed separators at each midnight boundary inside the visible window,
+  // so multi-day bars are still easy to read as "day 1 / day 2 / day 3".
+  const dayBoundaryShapes = Array.from({ length: windowDays - 1 }, (_, i) => ({
+    type: 'line',
+    xref: 'x',
+    yref: 'paper',
+    x0: dateObj.getTime() + (i + 1) * 24 * 3600000,
+    x1: dateObj.getTime() + (i + 1) * 24 * 3600000,
+    y0: 0,
+    y1: 1,
+    line: { color: isDark ? '#444' : '#ccc', width: 1, dash: 'dot' },
+  }));
 
   const MARGIN_T = 4;
   const MARGIN_B = 8;
@@ -183,10 +234,11 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
         <Plot
           data={[]}
           layout={{
-            height: 44,
-            margin: { l: ML, r: 16, t: 6, b: 28, autoexpand: false },
-            xaxis: xAxisConfig(dateObj, nextDay, fontColor, gridColor, true),
+            height: 52,
+            margin: { l: ML, r: 16, t: 6, b: 36, autoexpand: false },
+            xaxis: xAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
             yaxis: { visible: false, fixedrange: true },
+            shapes: dayBoundaryShapes,
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
             showlegend: false,
@@ -251,7 +303,7 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
               showlegend: false,
               margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B, autoexpand: false },
               xaxis: {
-                ...xAxisConfig(dateObj, nextDay, fontColor, gridColor, false),
+                ...xAxisConfig(dateObj, nextDay, fontColor, gridColor, false, windowDays),
                 showgrid: true,
                 fixedrange: false,   // allow zoom/pan in main chart
               },
@@ -262,6 +314,7 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
                 automargin: false,
                 gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
               },
+              shapes: [...dayBoundaryShapes, ...shiftShapes],
               hovermode: 'closest',
               hoverdistance: 2,
               hoverlabel: { font: { size: 13 }, namelength: -1 },
