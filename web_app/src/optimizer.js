@@ -7,6 +7,15 @@ function tasksOverlap(a, b) {
   return a.start < b.end && b.start < a.end;
 }
 
+// A staff member is eligible for a task only if they hold EVERY qualification
+// the task requires (AND, not OR) — a task's req_qual_vector can list more
+// than one required qualification (e.g. aircraft type + SV), and all of them
+// must be present in the employee/shift's quals.
+export function hasAllQuals(staffQuals, task) {
+  const required = task.reqTypes || (task.reqType ? [task.reqType] : []);
+  return required.every(q => staffQuals.includes(q));
+}
+
 // Back-to-back tasks at meaningfully different positions need walking/driving
 // time between them — without it the assignment isn't physically realistic.
 function hasInsufficientGap(a, b) {
@@ -93,7 +102,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
     let bestStaff = null, bestScore = null;
     for (const s of staff) {
       if (s.name === currentEmp) continue;
-      if (!s.quals.includes(task.reqType)) continue;
+      if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const score = scoreEmployee(s, assignedTasks, task);
@@ -108,7 +117,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
       let bestLoad = Infinity;
       for (const s of staff) {
         if (s.name === currentEmp) continue;
-        if (!s.quals.includes(task.reqType)) continue;
+        if (!hasAllQuals(s.quals, task)) continue;
         if (hasConflict(assignedTasks[s.name] || [], task)) continue;
         const load = (assignedTasks[s.name] || []).length;
         if (load < bestLoad) { bestLoad = load; bestStaff = s; }
@@ -159,7 +168,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     toAssign.map(t => [
       t.id,
       staff.filter(s =>
-        s.quals.includes(t.reqType) &&
+        hasAllQuals(s.quals, t) &&
         s.shiftStart <= t.start &&
         t.end <= s.shiftEnd
       ).length,
@@ -175,7 +184,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   for (const task of toAssign) {
     let bestStaff = null, bestScore = null;
     for (const s of staff) {
-      if (!s.quals.includes(task.reqType)) continue;
+      if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const score = scoreEmployee(s, assignedTasks, task);
@@ -193,7 +202,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     let resolved = false;
     for (const s of staff) {
       if (resolved) break;
-      if (!s.quals.includes(task.reqType)) continue;
+      if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
 
       const empTasks = assignedTasks[s.name] || [];
@@ -215,7 +224,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
         let moved = false;
         for (const alt of staff) {
           if (alt.name === s.name) continue;
-          if (!alt.quals.includes(conflict.reqType)) continue;
+          if (!hasAllQuals(alt.quals, conflict)) continue;
           if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;
           if (!hasConflict(tempAssigned[alt.name] || [], conflict)) {
             migrations.push({ task: conflict, from: s.name, to: alt.name });
@@ -249,7 +258,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   for (const task of remaining) {
     let bestStaff = null, bestLoad = Infinity;
     for (const s of staff) {
-      if (!s.quals.includes(task.reqType)) continue;
+      if (!hasAllQuals(s.quals, task)) continue;
       // Shift check removed intentionally — allow overtime assignment
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const load = (assignedTasks[s.name] || []).length;
@@ -263,7 +272,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   // This guarantees zero backlog as long as any qualified staff exists.
   for (const task of forced) {
     const qualified = staff
-      .filter(s => s.quals.includes(task.reqType))
+      .filter(s => hasAllQuals(s.quals, task))
       .sort((a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length);
     if (qualified.length > 0) {
       commit(result, assignedTasks, task.id, qualified[0].name);

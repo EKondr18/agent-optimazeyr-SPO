@@ -113,7 +113,8 @@ export function parseCSV(csvText) {
     const zone = TERMINAL_KEYWORDS.some(k => descLower.includes(k)) ? 'TERMINAL' : 'APRON';
 
     // reqType
-    const reqType = inferQual(notes);
+    const reqTypes = [inferQual(notes)];
+    const reqType = reqTypes.join(' + ');
 
     // Color
     if (!(description in colorIndex)) {
@@ -138,6 +139,7 @@ export function parseCSV(csvText) {
       duration,
       color,
       reqType,
+      reqTypes,
       employee: fio,
       isLocked: false,
     });
@@ -179,7 +181,7 @@ export function parseCSV(csvText) {
       const ends = shift.map(t => t.end);
       const minStart = new Date(Math.min(...starts) - 60 * 60 * 1000);
       const maxEnd = new Date(Math.max(...ends) + 60 * 60 * 1000);
-      const quals = [...new Set(shift.map(t => t.reqType))];
+      const quals = [...new Set(shift.flatMap(t => t.reqTypes))];
 
       const staffMember = {
         name: empName,
@@ -226,16 +228,23 @@ export function parseCSV(csvText) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // JSON export parser (tb_shifts / tb_resources / tb_res_qual /
-// tb_relation_resource_qualification / tb_relation_shift_qualification / orders)
-// — replaces parseCSV once the corporate system feeds the app directly.
+// tb_relation_resource_qualification / tb_relation_shift_qualification /
+// tb_sub_orders) — replaces parseCSV once the corporate system feeds the app
+// directly.
 //
 // Qualification matching is a real id-based join, not string guessing:
 //   tb_relation_resource_qualification.qualification_ref -> tb_res_qual.internal_id
 //   tb_relation_shift_qualification.qualification_ref    -> tb_res_qual._id
 //   tb_res_qual.name is the canonical SPO_-prefixed code, which is exactly what
-//   orders' req_qual_vector already contains (confirmed: tb_sub_order_requirements
+//   tb_sub_orders.req_qual_vector already contains (confirmed: tb_sub_order_requirements
 //   denormalizes req_resource_quals straight into the order, so no further hop
 //   through tb_relation_requirement_qualification is needed on the task side).
+//
+// req_qual_vector can list MORE THAN ONE required qualification per task —
+// eligibility is AND, not OR: a staff member/shift must hold every entry in
+// the vector, not just one (see optimizer.js's hasAllQuals). Confirmed against
+// a full real tb_sub_orders export: every record seen there happened to carry
+// exactly one qualification, but the matching logic doesn't assume that.
 //
 // A shift's qualification set is the union of its resource's personal quals
 // (tb_relation_resource_qualification) and the quals recorded against that
@@ -245,9 +254,23 @@ export function parseCSV(csvText) {
 // degree: null hasn't been clarified, so nothing is being excluded based on
 // either field yet.
 //
+// tb_sub_orders carries no res_assigned_to_ref/shift_assigned_to_ref in the
+// real export — every task arrives unassigned, which is exactly the
+// optimizer's input shape (nothing to pre-lock). The res_assigned_to_ref
+// handling below is kept only in case a future export does carry it.
+//
 // Still unresolved (flagged, not guessed): no flights reference table, so
-// task.flight falls back to the raw flight_ref id; no human-readable name for
-// flight_event_ref codes, so task.name uses the code as-is.
+// task.flight falls back to the raw flight_ref/outbound/inbound id; no
+// human-readable name for flight_event_ref codes, so task.name uses the code
+// as-is (confirmed acceptable for the demo — raw codes are fine).
+//
+// Location-based transition logic (getPosDistance / MIN_TRANSITION_POS_DIST
+// in optimizer.js) already covers "prefer/require nearby locations" for the
+// demo using the raw start_loc_ref/dest_loc_ref codes on each task — it does
+// not yet join against tb_location. tb_location.node_ref groups genuinely
+// adjacent stands (e.g. several MS_RD8 stands share one node), which is a
+// more accurate proximity signal than the current letter+number heuristic;
+// wiring that in is a deliberate next refinement, not done yet.
 // ═══════════════════════════════════════════════════════════════════════════
 
 function displayName(resource) {
@@ -312,9 +335,8 @@ function parseOrders(orders, resourceMap) {
     if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
 
     const name = o.flight_event_ref || o.order_rule_ref || 'Задача';
-    const reqType = Array.isArray(o.req_qual_vector) && o.req_qual_vector.length > 0
-      ? o.req_qual_vector[0]
-      : null;
+    const reqTypes = Array.isArray(o.req_qual_vector) ? o.req_qual_vector.filter(Boolean) : [];
+    const reqType = reqTypes.join(' + ');
     const pos = o.start_loc_ref || 'ПЕРРОН';
     const flight = o.flight_ref || o.outbound_flight_ref || o.inbound_flight_ref || 'Рейс не указ.';
 
@@ -341,6 +363,7 @@ function parseOrders(orders, resourceMap) {
       duration: Math.round((end - start) / 60000),
       color: colorIndex[name],
       reqType,
+      reqTypes,
       employee,
       isLocked,
       setupDuration: o.setup_duration ?? null,
