@@ -21,6 +21,17 @@ const { Sider, Content, Header } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 const { Text } = Typography;
 
+const GANTT_WINDOW_DAYS = 3;
+
+function shiftYMD(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function SidebarContent({
   isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
   availableDates, selectedDate, setSelectedDate, setOptimizerRan,
@@ -166,6 +177,29 @@ export default function App() {
     () => staffDB[selectedDate] ?? [],
     [staffDB, selectedDate]
   );
+
+  // The Gantt view alone looks a few days ahead of selectedDate — shifts and
+  // tasks routinely cross midnight, so a strict single-day window used to
+  // cut them off mid-bar. Optimizer/backlog logic stays anchored to the
+  // single selectedDate; only the chart's own data feed is widened.
+  const windowDates = useMemo(() => {
+    if (!selectedDate) return [];
+    return Array.from({ length: GANTT_WINDOW_DAYS }, (_, i) => shiftYMD(selectedDate, i));
+  }, [selectedDate]);
+  const ganttTasks = useMemo(
+    () => tasksDB.filter(t => windowDates.includes(t.date)),
+    [tasksDB, windowDates]
+  );
+  const ganttStaff = useMemo(() => {
+    const seen = new Map();
+    for (const d of windowDates) {
+      for (const s of (staffDB[d] || [])) {
+        const key = `${s.name}__${s.shiftStart.getTime()}`;
+        if (!seen.has(key)) seen.set(key, s);
+      }
+    }
+    return [...seen.values()];
+  }, [staffDB, windowDates]);
   const allTaskTypes = useMemo(
     () => [...new Set(tasksDB.map(t => t.name))].sort(),
     [tasksDB]
@@ -310,7 +344,7 @@ export default function App() {
       label: (
         <span style={{ fontWeight: 600 }}>
           <BarChartOutlined style={{ marginRight: 8 }} />
-          Оперативный план-график ({currentTasks.length} задач)
+          Оперативный план-график ({ganttTasks.length} задач за {GANTT_WINDOW_DAYS} дн.)
         </span>
       ),
       children: (
@@ -323,7 +357,9 @@ export default function App() {
             style={{ width: 220, marginBottom: 12 }}
           />
           <GanttChart
-            tasks={tasksDB}
+            tasks={ganttTasks}
+            staffShifts={ganttStaff}
+            windowDays={GANTT_WINDOW_DAYS}
             colorMap={colorMap}
             selectedDate={selectedDate}
             filterTypes={filterTypes}
