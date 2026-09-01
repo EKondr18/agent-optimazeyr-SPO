@@ -28,7 +28,7 @@ function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels, windowD
   };
 }
 
-export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
+export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
   const [expanded, setExpanded] = useState(() => new Set());
 
   const plotData = useMemo(() => {
@@ -194,7 +194,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, co
 
   const { traces, yOrderBottomUp, rowsTopDown, rowCount, legendEntries, shiftShapes } = plotData;
 
-  const dateObj = new Date(selectedDate + 'T00:00:00');
+  const dateObj = new Date((windowStart || selectedDate) + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
 
   // Dashed separators at each midnight boundary inside the visible window,
