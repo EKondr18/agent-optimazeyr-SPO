@@ -1,6 +1,18 @@
 import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space, Modal, Alert, Typography } from 'antd';
 import Plot from 'react-plotly.js';
+import { hasAllQuals } from '../optimizer';
+
+const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
+
+// Deterministic color per qualification code, since the corporate SPO_-prefixed
+// codes aren't a fixed 2-value set (SV/GH) — any number of distinct codes can
+// appear, so the color is derived from the string itself rather than hardcoded.
+function qualTagColor(qual) {
+  let hash = 0;
+  for (let i = 0; i < qual.length; i++) hash = (hash * 31 + qual.charCodeAt(i)) | 0;
+  return QUAL_TAG_COLORS[Math.abs(hash) % QUAL_TAG_COLORS.length];
+}
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -197,7 +209,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
       // Build list of alternatives: qualified, in shift, no conflict
       const alternatives = staffList.filter(s =>
         s.name !== sel &&
-        s.quals.includes(task.reqType) &&
+        hasAllQuals(s.quals, task) &&
         s.shiftStart <= task.start &&
         task.end <= s.shiftEnd &&
         getConflicts(s.name, task, tasks, selectedDate).length === 0
@@ -230,7 +242,9 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
         <Space size={4}>
           <span>{t.flight}</span>
           <Tag size="small">{t.pos}</Tag>
-          <Tag color={t.reqType === 'SV' ? 'blue' : 'green'} size="small">{t.reqType}</Tag>
+          {(t.reqTypes && t.reqTypes.length > 0 ? t.reqTypes : [t.reqType]).map(q => (
+            <Tag key={q} color={qualTagColor(q)} size="small">{q}</Tag>
+          ))}
         </Space>
       ),
     },
@@ -240,7 +254,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
       width: 240,
       render: (_, task) => {
         const eligible = staffList.filter(s =>
-          s.quals.includes(task.reqType) &&
+          hasAllQuals(s.quals, task) &&
           s.shiftStart <= task.start &&
           task.end <= s.shiftEnd
         );
