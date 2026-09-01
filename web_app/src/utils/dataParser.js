@@ -225,29 +225,30 @@ export function parseCSV(csvText) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// JSON export parser (tb_shifts / tb_resources / tb_relation_resource_qualification
-// / orders) — replaces parseCSV once the corporate system feeds the app directly.
+// JSON export parser (tb_shifts / tb_resources / tb_res_qual /
+// tb_relation_resource_qualification / tb_relation_shift_qualification / orders)
+// — replaces parseCSV once the corporate system feeds the app directly.
 //
-// Confirmed full exports this parser consumes: orders, tb_shifts, tb_resources,
-// tb_relation_resource_qualification. tb_res_qual (the qualification dictionary)
-// has NOT been received in full — only single example records — so aircraft-type
-// codes can't be resolved through it yet. As a bridge, expandQualCode() below
-// makes a resource's qualification set match both the bare code from
-// tb_relation_resource_qualification (e.g. "A-320") and the SPO_-prefixed form
-// used in orders' req_qual_vector (e.g. "SPO_A-320"), since every bare code
-// observed so far is the same string with "SPO_" stripped. Replace this with a
-// real tb_res_qual-based lookup once that table's full export arrives.
+// Qualification matching is a real id-based join, not string guessing:
+//   tb_relation_resource_qualification.qualification_ref -> tb_res_qual.internal_id
+//   tb_relation_shift_qualification.qualification_ref    -> tb_res_qual._id
+//   tb_res_qual.name is the canonical SPO_-prefixed code, which is exactly what
+//   orders' req_qual_vector already contains (confirmed: tb_sub_order_requirements
+//   denormalizes req_resource_quals straight into the order, so no further hop
+//   through tb_relation_requirement_qualification is needed on the task side).
 //
-// Also unresolved (flagged, not guessed): no flights reference table, so
+// A shift's qualification set is the union of its resource's personal quals
+// (tb_relation_resource_qualification) and the quals recorded against that
+// specific shift instance (tb_relation_shift_qualification). This is a
+// deliberate choice, not a confirmed rule — the meaning of
+// tb_relation_shift_qualification's "not_manual" flag and of records with
+// degree: null hasn't been clarified, so nothing is being excluded based on
+// either field yet.
+//
+// Still unresolved (flagged, not guessed): no flights reference table, so
 // task.flight falls back to the raw flight_ref id; no human-readable name for
 // flight_event_ref codes, so task.name uses the code as-is.
 // ═══════════════════════════════════════════════════════════════════════════
-
-function expandQualCode(rawCode) {
-  const code = (rawCode || '').trim();
-  if (!code) return [];
-  return code.startsWith('SPO_') ? [code] : [code, `SPO_${code}`];
-}
 
 function displayName(resource) {
   if (!resource) return null;
@@ -262,12 +263,40 @@ function buildResourceMap(resources) {
   return map;
 }
 
-function buildQualMap(resourceQualifications) {
+function buildQualDict(resQual) {
+  const byId = new Map();
+  const byInternalId = new Map();
+  for (const q of resQual || []) {
+    byId.set(q._id, q);
+    byInternalId.set(q.internal_id, q);
+  }
+  return { byId, byInternalId };
+}
+
+// Resolves a qualification_ref (either a tb_res_qual._id or a tb_res_qual.internal_id,
+// the two formats actually observed across the relation tables) to the canonical
+// SPO_-prefixed code used everywhere else. Falls back to the raw ref if the
+// dictionary doesn't contain it, rather than silently dropping the qualification.
+function resolveQualCode(ref, qualDict) {
+  if (!ref) return null;
+  const rec = qualDict.byId.get(ref) || qualDict.byInternalId.get(ref);
+  return rec ? rec.name : ref;
+}
+
+function buildResourceQualMap(resourceQualifications, qualDict) {
   const map = new Map();
   for (const rel of resourceQualifications || []) {
     if (!map.has(rel.resource_ref)) map.set(rel.resource_ref, new Set());
-    const set = map.get(rel.resource_ref);
-    for (const code of expandQualCode(rel.qualification_ref)) set.add(code);
+    map.get(rel.resource_ref).add(resolveQualCode(rel.qualification_ref, qualDict));
+  }
+  return map;
+}
+
+function buildShiftQualMap(shiftQualifications, qualDict) {
+  const map = new Map();
+  for (const rel of shiftQualifications || []) {
+    if (!map.has(rel.shift_ref)) map.set(rel.shift_ref, new Set());
+    map.get(rel.shift_ref).add(resolveQualCode(rel.qualification_ref, qualDict));
   }
   return map;
 }
@@ -323,7 +352,7 @@ function parseOrders(orders, resourceMap) {
   return tasks;
 }
 
-function parseShifts(shifts, resourceMap, qualMap) {
+function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
   const staffDB = {};
 
   for (const s of shifts || []) {
@@ -335,7 +364,12 @@ function parseShifts(shifts, resourceMap, qualMap) {
     const shiftEnd = s.scheduled_end ? new Date(s.scheduled_end) : null;
     if (!shiftStart || !shiftEnd) continue;
 
-    const quals = [...(qualMap.get(s.resource_ref) || [])];
+    // Union of personal quals and quals recorded for this specific shift instance.
+    const qualSet = new Set([
+      ...(resourceQualMap.get(s.resource_ref) || []),
+      ...(shiftQualMap.get(s._id) || []),
+    ]);
+    const quals = [...qualSet];
 
     const staffMember = {
       name: displayName(resource) || resource.internal_id,
@@ -364,12 +398,21 @@ function parseShifts(shifts, resourceMap, qualMap) {
   return staffDB;
 }
 
-export function parseJsonExport({ orders, shifts, resources, resourceQualifications }) {
+export function parseJsonExport({
+  orders,
+  shifts,
+  resources,
+  resQual,
+  resourceQualifications,
+  shiftQualifications,
+}) {
   const resourceMap = buildResourceMap(resources);
-  const qualMap = buildQualMap(resourceQualifications);
+  const qualDict = buildQualDict(resQual);
+  const resourceQualMap = buildResourceQualMap(resourceQualifications, qualDict);
+  const shiftQualMap = buildShiftQualMap(shiftQualifications, qualDict);
 
   const tasks = parseOrders(orders, resourceMap);
-  const staffDB = parseShifts(shifts, resourceMap, qualMap);
+  const staffDB = parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap);
 
   const colorMap = {};
   for (const t of tasks) colorMap[t.name] = t.color;
