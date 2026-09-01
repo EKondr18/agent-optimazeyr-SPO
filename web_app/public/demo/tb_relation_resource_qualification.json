@@ -1,0 +1,2401 @@
+[ {
+  "_id" : "6a8ed59b3d32a442e034c44d",
+  "degree" : 100,
+  "resource_ref" : "a39083c2-f6fd-4fc1-9d43-620700c55254",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-26T12:01:31.574Z",
+  "updated_on" : "2026-08-26T12:01:31.574Z",
+  "internal_id" : "4d3dc4f5-dd91-4136-9301-cdffb44b8ad4"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a7c",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:06:00.363Z",
+  "updated_on" : "2026-08-20T13:06:00.363Z",
+  "internal_id" : "2ef9ceac-bc79-4101-a389-99acec775b13"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a7b",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:06:00.359Z",
+  "updated_on" : "2026-08-20T13:06:00.359Z",
+  "internal_id" : "69e2d2b8-4a76-439f-806c-afec9e9bb048"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a7a",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:06:00.348Z",
+  "updated_on" : "2026-08-20T13:06:00.348Z",
+  "internal_id" : "2eeb09b8-493d-4aa3-8562-61d7f94b73d1"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a79",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:06:00.348Z",
+  "updated_on" : "2026-08-20T13:06:00.348Z",
+  "internal_id" : "050f1b21-3135-42f1-9425-1f94053e8bfc"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a78",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:06:00.344Z",
+  "updated_on" : "2026-08-20T13:06:00.344Z",
+  "internal_id" : "542fbc23-673b-4d67-8cb9-0d5354f25a97"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a77",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:06:00.341Z",
+  "updated_on" : "2026-08-20T13:06:00.341Z",
+  "internal_id" : "bc8584d8-7c50-4de0-aeea-c9c516734bad"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a76",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:06:00.301Z",
+  "updated_on" : "2026-08-20T13:06:00.301Z",
+  "internal_id" : "269ad0b6-b16e-416f-91c6-55d6e525ddf2"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a75",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:06:00.297Z",
+  "updated_on" : "2026-08-20T13:06:00.297Z",
+  "internal_id" : "29dee4df-9664-41cf-a0fb-44ef529e6587"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a74",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:06:00.282Z",
+  "updated_on" : "2026-08-20T13:06:00.282Z",
+  "internal_id" : "9a6e4cef-f501-45a0-a69b-9f49dde45f1e"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a73",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:06:00.270Z",
+  "updated_on" : "2026-08-20T13:06:00.270Z",
+  "internal_id" : "4eba812b-fd08-470c-8732-9adc9af120ca"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a72",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:06:00.254Z",
+  "updated_on" : "2026-08-20T13:06:00.254Z",
+  "internal_id" : "fb139b5c-80f7-4f82-ac01-2be7cf9c2b26"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a71",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:06:00.249Z",
+  "updated_on" : "2026-08-20T13:06:00.249Z",
+  "internal_id" : "c50820d9-804d-4e29-984c-f78e7988b06b"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6f",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:06:00.248Z",
+  "updated_on" : "2026-08-20T13:06:00.248Z",
+  "internal_id" : "99d084c4-7222-44f8-88f0-4998d329b20a"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6e",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:06:00.243Z",
+  "updated_on" : "2026-08-20T13:06:00.243Z",
+  "internal_id" : "c4694018-3a3a-465e-a460-0ca7bddef48f"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a70",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:06:00.243Z",
+  "updated_on" : "2026-08-20T13:06:00.243Z",
+  "internal_id" : "12b60c83-a488-4598-9fd9-b3acd4104706"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6d",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:06:00.235Z",
+  "updated_on" : "2026-08-20T13:06:00.235Z",
+  "internal_id" : "71d61d26-1185-4ebc-a9c2-ca404880a0ed"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6c",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:06:00.199Z",
+  "updated_on" : "2026-08-20T13:06:00.199Z",
+  "internal_id" : "40ce2977-cb9b-4808-8b97-f9a59268f5a3"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6b",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:06:00.194Z",
+  "updated_on" : "2026-08-20T13:06:00.194Z",
+  "internal_id" : "c80f1a7c-6da0-47d2-bbe4-d33cf7f74a97"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a6a",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:06:00.190Z",
+  "updated_on" : "2026-08-20T13:06:00.190Z",
+  "internal_id" : "cefa280d-5ed6-4e7e-a1b7-93b1be1cd18d"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a69",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:06:00.165Z",
+  "updated_on" : "2026-08-20T13:06:00.165Z",
+  "internal_id" : "3bd8c8ca-158f-4b15-b464-fab972adc358"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a68",
+  "degree" : null,
+  "resource_ref" : "d1a9498d-d7ac-40d8-8c0a-66dc1107d3e5",
+  "qualification_ref" : "0E",
+  "created_on" : "2026-08-20T13:06:00.158Z",
+  "updated_on" : "2026-08-20T13:06:00.158Z",
+  "internal_id" : "1f398f7f-580e-4e9d-b09d-2889b93e13f8"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a67",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:06:00.127Z",
+  "updated_on" : "2026-08-20T13:06:00.127Z",
+  "internal_id" : "831d4f6c-d8a6-4f98-965c-0042cabf2989"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a66",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:06:00.124Z",
+  "updated_on" : "2026-08-20T13:06:00.124Z",
+  "internal_id" : "ce8023e8-422b-4da8-b14b-b27138f89ffe"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a65",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:06:00.124Z",
+  "updated_on" : "2026-08-20T13:06:00.124Z",
+  "internal_id" : "a1b4d299-311e-432c-b211-5d79f4c9ad05"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a63",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:06:00.124Z",
+  "updated_on" : "2026-08-20T13:06:00.124Z",
+  "internal_id" : "3a42e104-9b3f-400d-8a3d-171768c411af"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a64",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:06:00.120Z",
+  "updated_on" : "2026-08-20T13:06:00.120Z",
+  "internal_id" : "948dba27-93e6-40de-a9c4-4bb8ae60f566"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a62",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:06:00.086Z",
+  "updated_on" : "2026-08-20T13:06:00.086Z",
+  "internal_id" : "775d4269-c952-4dfb-9f05-612fbb04a949"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a60",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:06:00.056Z",
+  "updated_on" : "2026-08-20T13:06:00.056Z",
+  "internal_id" : "318f9661-f380-42f1-ae86-e816dc034e45"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a61",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:06:00.049Z",
+  "updated_on" : "2026-08-20T13:06:00.049Z",
+  "internal_id" : "1ab15e06-0ed9-480e-8bdd-3c17c0cddc2c"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a5f",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:59.996Z",
+  "updated_on" : "2026-08-20T13:05:59.996Z",
+  "internal_id" : "60a5d42a-e150-4493-9306-40efde15e1bf"
+}, {
+  "_id" : "6a86fbb8c1eadf30f0895a5e",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:59.994Z",
+  "updated_on" : "2026-08-20T13:05:59.994Z",
+  "internal_id" : "5cb65807-259f-410f-b174-2fe2de48a2f3"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a5d",
+  "degree" : null,
+  "resource_ref" : "4339577a-10d4-42d4-ab24-6c0dfe45cd3f",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:59.984Z",
+  "updated_on" : "2026-08-20T13:05:59.984Z",
+  "internal_id" : "ccf547dc-ecd2-4383-8838-56a7c7ca756e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a5c",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:59.980Z",
+  "updated_on" : "2026-08-20T13:05:59.980Z",
+  "internal_id" : "d5c26840-36af-4ecc-9f21-5d5c8dbf226f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a5b",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "XY",
+  "created_on" : "2026-08-20T13:05:59.976Z",
+  "updated_on" : "2026-08-20T13:05:59.976Z",
+  "internal_id" : "53284da0-ebdd-4aee-adb8-666a07ee2c2b"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a5a",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:59.974Z",
+  "updated_on" : "2026-08-20T13:05:59.974Z",
+  "internal_id" : "a3d4407f-59a5-416a-aa73-a0267cabd728"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a59",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:59.974Z",
+  "updated_on" : "2026-08-20T13:05:59.974Z",
+  "internal_id" : "267996a4-03b0-43de-858b-4918380dc350"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a58",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:59.967Z",
+  "updated_on" : "2026-08-20T13:05:59.967Z",
+  "internal_id" : "16bff86d-63b5-4b29-8179-e4562d1031ec"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a56",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "U7",
+  "created_on" : "2026-08-20T13:05:59.938Z",
+  "updated_on" : "2026-08-20T13:05:59.938Z",
+  "internal_id" : "3a1c9d74-98dd-4c7e-9b65-242257db4b68"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a57",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:59.937Z",
+  "updated_on" : "2026-08-20T13:05:59.937Z",
+  "internal_id" : "5a87c803-9809-41a6-a2bd-332a3e6b4472"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a55",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:59.919Z",
+  "updated_on" : "2026-08-20T13:05:59.919Z",
+  "internal_id" : "8aa06b8c-2259-4348-b67c-1096652c1380"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a54",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:59.909Z",
+  "updated_on" : "2026-08-20T13:05:59.909Z",
+  "internal_id" : "2f4a29f4-2332-4cfb-96f0-215aaa154b9d"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a53",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "RB",
+  "created_on" : "2026-08-20T13:05:59.900Z",
+  "updated_on" : "2026-08-20T13:05:59.900Z",
+  "internal_id" : "f7b7aabe-a931-48cc-a58d-afca645d2f44"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a52",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:59.896Z",
+  "updated_on" : "2026-08-20T13:05:59.896Z",
+  "internal_id" : "4f277e1f-b4d5-4748-84db-7a61b8ca8852"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a51",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "PC",
+  "created_on" : "2026-08-20T13:05:59.891Z",
+  "updated_on" : "2026-08-20T13:05:59.891Z",
+  "internal_id" : "8572e181-e169-411a-af78-f5302b30af33"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a50",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:59.883Z",
+  "updated_on" : "2026-08-20T13:05:59.883Z",
+  "internal_id" : "e826b3d3-c766-47e1-b215-a3c1340ce0b1"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4f",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "MRJ",
+  "created_on" : "2026-08-20T13:05:59.883Z",
+  "updated_on" : "2026-08-20T13:05:59.883Z",
+  "internal_id" : "c72e44c6-cfe5-46b1-857a-f14b11901bf6"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4e",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:59.882Z",
+  "updated_on" : "2026-08-20T13:05:59.882Z",
+  "internal_id" : "8d9ed1ef-4f78-48a3-97c7-0a14468db139"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4d",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:59.851Z",
+  "updated_on" : "2026-08-20T13:05:59.851Z",
+  "internal_id" : "d443809e-3d3d-4fb4-aa88-c3a8db17bf1e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4c",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "IA",
+  "created_on" : "2026-08-20T13:05:59.846Z",
+  "updated_on" : "2026-08-20T13:05:59.846Z",
+  "internal_id" : "b93544be-0b9a-4969-9df2-2abaf979aa49"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4b",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:59.832Z",
+  "updated_on" : "2026-08-20T13:05:59.832Z",
+  "internal_id" : "babc63b2-a863-4668-a893-7bc13d419059"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a4a",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "FZ",
+  "created_on" : "2026-08-20T13:05:59.818Z",
+  "updated_on" : "2026-08-20T13:05:59.818Z",
+  "internal_id" : "7ffb239e-2a50-4c04-9b6e-ea5fb8859f7d"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a49",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:59.808Z",
+  "updated_on" : "2026-08-20T13:05:59.808Z",
+  "internal_id" : "f4ac415b-931a-4203-8d9f-7a8f5917eee4"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a48",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:59.806Z",
+  "updated_on" : "2026-08-20T13:05:59.806Z",
+  "internal_id" : "c2fc279c-5629-44d0-b74b-ee18e5accbff"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a47",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:59.801Z",
+  "updated_on" : "2026-08-20T13:05:59.801Z",
+  "internal_id" : "ceeaeae8-8389-443c-9b48-33ac9a2d9dfb"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a46",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "BJ",
+  "created_on" : "2026-08-20T13:05:59.793Z",
+  "updated_on" : "2026-08-20T13:05:59.793Z",
+  "internal_id" : "630f4b72-3af2-46a5-8165-5e8f310b7f7d"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a45",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:59.791Z",
+  "updated_on" : "2026-08-20T13:05:59.791Z",
+  "internal_id" : "1b51cd7b-afee-4d65-98d2-eb8cb685c97b"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a44",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:59.790Z",
+  "updated_on" : "2026-08-20T13:05:59.790Z",
+  "internal_id" : "bdf5862f-1b0a-4eb2-809a-543749286a27"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a43",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "B9",
+  "created_on" : "2026-08-20T13:05:59.754Z",
+  "updated_on" : "2026-08-20T13:05:59.754Z",
+  "internal_id" : "48da9617-4078-4dca-85a2-9fb86dbc7117"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a42",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:59.750Z",
+  "updated_on" : "2026-08-20T13:05:59.750Z",
+  "internal_id" : "e0c16d8d-3391-4a8f-bf42-7e412b431f2b"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a41",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:59.745Z",
+  "updated_on" : "2026-08-20T13:05:59.745Z",
+  "internal_id" : "0a8d014c-6034-40cb-b4d1-aaf5c5656864"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a40",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:59.729Z",
+  "updated_on" : "2026-08-20T13:05:59.729Z",
+  "internal_id" : "4d4af248-1dc9-41ed-95ea-ca357acf53d9"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3f",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:59.717Z",
+  "updated_on" : "2026-08-20T13:05:59.717Z",
+  "internal_id" : "4b451e3a-45ad-4d37-9729-b9316ab0567f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3e",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "5G",
+  "created_on" : "2026-08-20T13:05:59.715Z",
+  "updated_on" : "2026-08-20T13:05:59.715Z",
+  "internal_id" : "ceba8128-2933-4ee7-b6ba-a99c29119565"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3d",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:59.713Z",
+  "updated_on" : "2026-08-20T13:05:59.713Z",
+  "internal_id" : "1bc4820d-6337-4bba-8305-a9c35e6226be"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3c",
+  "degree" : null,
+  "resource_ref" : "2a6267a8-b0bd-48ed-8a1a-45d78b7dedbb",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:59.711Z",
+  "updated_on" : "2026-08-20T13:05:59.711Z",
+  "internal_id" : "cf545ea2-8024-4633-99c8-fc637b4a7cd2"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3b",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:59.708Z",
+  "updated_on" : "2026-08-20T13:05:59.708Z",
+  "internal_id" : "7593475b-415d-4474-8344-759315d949a2"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a3a",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:59.704Z",
+  "updated_on" : "2026-08-20T13:05:59.704Z",
+  "internal_id" : "76a336bf-05bc-49a1-b5cb-7217f89592ee"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a39",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:59.667Z",
+  "updated_on" : "2026-08-20T13:05:59.667Z",
+  "internal_id" : "87f38883-e32c-4b51-a1e5-a9d3ff6aada6"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a38",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:59.664Z",
+  "updated_on" : "2026-08-20T13:05:59.664Z",
+  "internal_id" : "80138637-f3b9-4d05-b64e-d2bb3948e141"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a37",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:59.660Z",
+  "updated_on" : "2026-08-20T13:05:59.660Z",
+  "internal_id" : "cea2c21f-bf3c-440d-9568-9ada5966536c"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a36",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "RB",
+  "created_on" : "2026-08-20T13:05:59.639Z",
+  "updated_on" : "2026-08-20T13:05:59.639Z",
+  "internal_id" : "c222ecaf-cebb-4d5f-9303-f28dfb828660"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a35",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "PC",
+  "created_on" : "2026-08-20T13:05:59.638Z",
+  "updated_on" : "2026-08-20T13:05:59.638Z",
+  "internal_id" : "cdc090fc-12f7-4f48-ba6a-f75a4877bd2f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a34",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:59.629Z",
+  "updated_on" : "2026-08-20T13:05:59.629Z",
+  "internal_id" : "ce1f13fc-c3f3-40b2-b8f5-4e456b75d8ec"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a33",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:59.624Z",
+  "updated_on" : "2026-08-20T13:05:59.624Z",
+  "internal_id" : "8b7c1386-c067-49fa-9a47-44c47eecece0"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a31",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:59.623Z",
+  "updated_on" : "2026-08-20T13:05:59.623Z",
+  "internal_id" : "f4e7a62b-17fc-497c-9317-65085f2cf221"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a32",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "MRJ",
+  "created_on" : "2026-08-20T13:05:59.623Z",
+  "updated_on" : "2026-08-20T13:05:59.623Z",
+  "internal_id" : "e5e7b254-d4c2-4cb7-b230-9492910562d5"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a30",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:59.617Z",
+  "updated_on" : "2026-08-20T13:05:59.617Z",
+  "internal_id" : "3e12cd64-7db5-42d7-ac95-c189647c4915"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2f",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "IA",
+  "created_on" : "2026-08-20T13:05:59.582Z",
+  "updated_on" : "2026-08-20T13:05:59.582Z",
+  "internal_id" : "2a4c7d1a-469a-4cb7-b7d8-4dc00b7dc316"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2d",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:59.575Z",
+  "updated_on" : "2026-08-20T13:05:59.575Z",
+  "internal_id" : "946bcfa0-9284-480a-b50b-93af76c19473"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2e",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:59.575Z",
+  "updated_on" : "2026-08-20T13:05:59.575Z",
+  "internal_id" : "2d53ecf5-f418-4e4e-bdf5-694fa5773e4c"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2c",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:59.550Z",
+  "updated_on" : "2026-08-20T13:05:59.550Z",
+  "internal_id" : "e0b843a8-51a8-43c0-a260-1ad2132df712"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2b",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:59.546Z",
+  "updated_on" : "2026-08-20T13:05:59.546Z",
+  "internal_id" : "6e8c0abb-bd0c-4c62-9919-8f43ce2d801e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a2a",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:59.544Z",
+  "updated_on" : "2026-08-20T13:05:59.544Z",
+  "internal_id" : "09bd69b3-5a98-48cc-a681-fbddbc51fa92"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a29",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "B9",
+  "created_on" : "2026-08-20T13:05:59.535Z",
+  "updated_on" : "2026-08-20T13:05:59.535Z",
+  "internal_id" : "f08ff701-0d13-4f32-b861-7ea3a9b18921"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a28",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:59.535Z",
+  "updated_on" : "2026-08-20T13:05:59.535Z",
+  "internal_id" : "0d65452a-b431-4572-a50a-8ac4b746417e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a27",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "BJ",
+  "created_on" : "2026-08-20T13:05:59.531Z",
+  "updated_on" : "2026-08-20T13:05:59.531Z",
+  "internal_id" : "8cdcc2e1-0c0b-405f-8c8b-97415735858c"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a26",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:59.524Z",
+  "updated_on" : "2026-08-20T13:05:59.524Z",
+  "internal_id" : "808cb8e8-489d-4e98-9df9-74d8286677bd"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a25",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:59.498Z",
+  "updated_on" : "2026-08-20T13:05:59.498Z",
+  "internal_id" : "2c5218a2-3179-4fa0-8f7b-59baebdff8af"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a24",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:59.496Z",
+  "updated_on" : "2026-08-20T13:05:59.496Z",
+  "internal_id" : "2d2c51e8-2f72-4801-8dd6-73d8c5c1fd17"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a23",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:59.491Z",
+  "updated_on" : "2026-08-20T13:05:59.491Z",
+  "internal_id" : "457fabcf-fe00-4b78-a8cb-17f21c4a042c"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a22",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "5G",
+  "created_on" : "2026-08-20T13:05:59.465Z",
+  "updated_on" : "2026-08-20T13:05:59.465Z",
+  "internal_id" : "004b91d8-eeaa-4cd1-ae54-bab07a80b345"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a21",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:59.448Z",
+  "updated_on" : "2026-08-20T13:05:59.448Z",
+  "internal_id" : "dcb6631b-0e05-41e5-b207-62dda82d194c"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a20",
+  "degree" : null,
+  "resource_ref" : "bd17e882-01c9-4f40-a422-8713b73895e7",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:59.447Z",
+  "updated_on" : "2026-08-20T13:05:59.447Z",
+  "internal_id" : "f4d94385-2820-4448-ad0d-cc4b6ce58713"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1f",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "XY",
+  "created_on" : "2026-08-20T13:05:59.441Z",
+  "updated_on" : "2026-08-20T13:05:59.441Z",
+  "internal_id" : "4d41e74c-1ba3-44ac-87e6-7f1ad2ec6051"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1e",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:59.440Z",
+  "updated_on" : "2026-08-20T13:05:59.440Z",
+  "internal_id" : "0a563821-be25-4678-8d38-cf4bdd5aa78f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1d",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:59.438Z",
+  "updated_on" : "2026-08-20T13:05:59.438Z",
+  "internal_id" : "94dbe88b-5018-4db4-a77d-e7bed4f8620d"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1c",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:59.432Z",
+  "updated_on" : "2026-08-20T13:05:59.432Z",
+  "internal_id" : "da34e783-0f13-4415-b069-4d268ea7df57"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1b",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:59.412Z",
+  "updated_on" : "2026-08-20T13:05:59.412Z",
+  "internal_id" : "ab46345f-8951-4677-9e6d-9e1302b2cceb"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a1a",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:59.412Z",
+  "updated_on" : "2026-08-20T13:05:59.412Z",
+  "internal_id" : "6d336f0c-0ef7-4e26-8654-e0722f8364ea"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a19",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "U7",
+  "created_on" : "2026-08-20T13:05:59.405Z",
+  "updated_on" : "2026-08-20T13:05:59.405Z",
+  "internal_id" : "19c5f71d-b8ca-44ef-902a-9b7b45d102a2"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a18",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:59.383Z",
+  "updated_on" : "2026-08-20T13:05:59.383Z",
+  "internal_id" : "d0c3546d-363e-45db-9d89-e617a22c15a7"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a17",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "RB",
+  "created_on" : "2026-08-20T13:05:59.371Z",
+  "updated_on" : "2026-08-20T13:05:59.371Z",
+  "internal_id" : "7fe1eed5-2f87-4378-b19a-f38c84d05e9e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a16",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:59.355Z",
+  "updated_on" : "2026-08-20T13:05:59.355Z",
+  "internal_id" : "66dc8459-52ba-4f13-b26c-06dbb4c23134"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a15",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "PC",
+  "created_on" : "2026-08-20T13:05:59.352Z",
+  "updated_on" : "2026-08-20T13:05:59.352Z",
+  "internal_id" : "c49cb821-6e7a-48d5-82f4-6e41c140d941"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a14",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "MRJ",
+  "created_on" : "2026-08-20T13:05:59.350Z",
+  "updated_on" : "2026-08-20T13:05:59.350Z",
+  "internal_id" : "65a9e34c-0cfd-483c-ab00-437e7dde0c01"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a13",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:59.350Z",
+  "updated_on" : "2026-08-20T13:05:59.350Z",
+  "internal_id" : "1cce59c2-b904-4392-8704-2a63d36c783f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a12",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:59.348Z",
+  "updated_on" : "2026-08-20T13:05:59.348Z",
+  "internal_id" : "c274d92c-03f9-44d6-b3d0-8f7f32f3554f"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a11",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:59.326Z",
+  "updated_on" : "2026-08-20T13:05:59.326Z",
+  "internal_id" : "fbae34c5-ac55-441d-a351-2b598212316b"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a10",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "IA",
+  "created_on" : "2026-08-20T13:05:59.322Z",
+  "updated_on" : "2026-08-20T13:05:59.322Z",
+  "internal_id" : "e7dfa69e-f512-4446-85d9-224edd661628"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0f",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:59.315Z",
+  "updated_on" : "2026-08-20T13:05:59.315Z",
+  "internal_id" : "87f5475c-5ee0-40b1-a7b0-ba145c719d16"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0e",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "FZ",
+  "created_on" : "2026-08-20T13:05:59.292Z",
+  "updated_on" : "2026-08-20T13:05:59.292Z",
+  "internal_id" : "833f4993-845b-478f-bf48-43ff4b34a089"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0d",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:59.287Z",
+  "updated_on" : "2026-08-20T13:05:59.287Z",
+  "internal_id" : "fe338779-59ea-4638-b2c2-8c4708392cfd"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0c",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:59.269Z",
+  "updated_on" : "2026-08-20T13:05:59.269Z",
+  "internal_id" : "a7637c7e-a22e-4a36-8493-a5df02a8d884"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0b",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:59.267Z",
+  "updated_on" : "2026-08-20T13:05:59.267Z",
+  "internal_id" : "8a2f08fb-6f85-48d7-92bf-38c1d5866f58"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a0a",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "BJ",
+  "created_on" : "2026-08-20T13:05:59.264Z",
+  "updated_on" : "2026-08-20T13:05:59.264Z",
+  "internal_id" : "0a530225-9b1e-4751-b35d-0c83a3bdddd2"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a09",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:59.256Z",
+  "updated_on" : "2026-08-20T13:05:59.256Z",
+  "internal_id" : "0708b061-c48d-4b5f-b72c-30e863a546e0"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a08",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "B9",
+  "created_on" : "2026-08-20T13:05:59.254Z",
+  "updated_on" : "2026-08-20T13:05:59.254Z",
+  "internal_id" : "209f81f4-32aa-47ca-af0a-44f06ce829dd"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a07",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:59.236Z",
+  "updated_on" : "2026-08-20T13:05:59.236Z",
+  "internal_id" : "f5a2a8b5-2207-4067-8172-01168b932781"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a06",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:59.220Z",
+  "updated_on" : "2026-08-20T13:05:59.220Z",
+  "internal_id" : "31aecb8f-90e4-4827-a20f-4d6ad019ee17"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a05",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:59.219Z",
+  "updated_on" : "2026-08-20T13:05:59.219Z",
+  "internal_id" : "17e205c3-e39c-49c5-b3d1-7e56dccbce12"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a04",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:59.205Z",
+  "updated_on" : "2026-08-20T13:05:59.205Z",
+  "internal_id" : "29b33d92-445b-44c0-93cc-cb9a13884c9b"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a03",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "5G",
+  "created_on" : "2026-08-20T13:05:59.194Z",
+  "updated_on" : "2026-08-20T13:05:59.194Z",
+  "internal_id" : "f272e2e7-659a-4b37-a574-83c22c8368e1"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a02",
+  "degree" : null,
+  "resource_ref" : "a237cd5c-6082-4a3f-afa8-312a8e6da819",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:59.180Z",
+  "updated_on" : "2026-08-20T13:05:59.180Z",
+  "internal_id" : "73a57f88-5cfb-48b3-8ba1-f9c0c0639d98"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a01",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "XY",
+  "created_on" : "2026-08-20T13:05:59.174Z",
+  "updated_on" : "2026-08-20T13:05:59.174Z",
+  "internal_id" : "db237109-0626-4531-ba6a-bd00fdfb3e63"
+}, {
+  "_id" : "6a86fbb7c1eadf30f0895a00",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:59.173Z",
+  "updated_on" : "2026-08-20T13:05:59.173Z",
+  "internal_id" : "2daf1b4c-a8da-4263-8b41-566cffaf9f30"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959ff",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:59.168Z",
+  "updated_on" : "2026-08-20T13:05:59.168Z",
+  "internal_id" : "caf61e09-55e6-4e07-946c-04784241fb76"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959fe",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:59.160Z",
+  "updated_on" : "2026-08-20T13:05:59.160Z",
+  "internal_id" : "463abfed-6646-4e0d-9e7c-cdfeffb83299"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959fd",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:59.145Z",
+  "updated_on" : "2026-08-20T13:05:59.145Z",
+  "internal_id" : "4115a193-ad5d-4903-a6b1-52d6fbf1009e"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959fc",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:59.139Z",
+  "updated_on" : "2026-08-20T13:05:59.139Z",
+  "internal_id" : "5a4cc30d-8aad-4d85-8762-bc83ded38ec1"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959fb",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "U7",
+  "created_on" : "2026-08-20T13:05:59.129Z",
+  "updated_on" : "2026-08-20T13:05:59.129Z",
+  "internal_id" : "a2690659-1c2b-446b-8180-d89f0ffb4970"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959fa",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:59.118Z",
+  "updated_on" : "2026-08-20T13:05:59.118Z",
+  "internal_id" : "405f7695-fb9b-417d-a898-450dc10b8dba"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f9",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:59.104Z",
+  "updated_on" : "2026-08-20T13:05:59.104Z",
+  "internal_id" : "440650ee-3281-48a4-bd37-b9955f982027"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f8",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "RB",
+  "created_on" : "2026-08-20T13:05:59.095Z",
+  "updated_on" : "2026-08-20T13:05:59.095Z",
+  "internal_id" : "5d31e748-f5ef-4da6-984c-a1956d6f3c81"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f7",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:59.088Z",
+  "updated_on" : "2026-08-20T13:05:59.088Z",
+  "internal_id" : "83d0e8fc-a248-472a-9705-421c0e0c54ea"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f6",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "PC",
+  "created_on" : "2026-08-20T13:05:59.087Z",
+  "updated_on" : "2026-08-20T13:05:59.087Z",
+  "internal_id" : "35084f9a-b109-47cb-bce2-811e394c9960"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f5",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:59.082Z",
+  "updated_on" : "2026-08-20T13:05:59.082Z",
+  "internal_id" : "13eafb30-8f7a-47e6-a1a5-009ad021f9af"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f4",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "MRJ",
+  "created_on" : "2026-08-20T13:05:59.071Z",
+  "updated_on" : "2026-08-20T13:05:59.071Z",
+  "internal_id" : "78a83d58-fec9-4c72-944e-9f7be8997ee4"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f3",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:59.068Z",
+  "updated_on" : "2026-08-20T13:05:59.068Z",
+  "internal_id" : "cc5d90a7-6d8d-49fa-b8a0-424e06f2cf50"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f2",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:59.060Z",
+  "updated_on" : "2026-08-20T13:05:59.060Z",
+  "internal_id" : "0298ba78-c68d-4314-9a88-df7c873cbac3"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f1",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "IA",
+  "created_on" : "2026-08-20T13:05:59.040Z",
+  "updated_on" : "2026-08-20T13:05:59.040Z",
+  "internal_id" : "af62333a-7906-4ad5-8c56-d4f421d04f55"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959f0",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:59.030Z",
+  "updated_on" : "2026-08-20T13:05:59.030Z",
+  "internal_id" : "b9a4c20f-96cf-4ecd-b684-392019fb2bad"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959ef",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:59.004Z",
+  "updated_on" : "2026-08-20T13:05:59.004Z",
+  "internal_id" : "99dfcc2c-2cc4-4a87-b028-5ad241cc4de1"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959ee",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "FZ",
+  "created_on" : "2026-08-20T13:05:58.993Z",
+  "updated_on" : "2026-08-20T13:05:58.993Z",
+  "internal_id" : "6846feff-cc9d-4d41-b223-ca81919d7ae3"
+}, {
+  "_id" : "6a86fbb7c1eadf30f08959ed",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:58.992Z",
+  "updated_on" : "2026-08-20T13:05:58.992Z",
+  "internal_id" : "3751085e-1fe1-4239-b34b-80b531a8b40f"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ec",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.986Z",
+  "updated_on" : "2026-08-20T13:05:58.986Z",
+  "internal_id" : "f9cbbd35-0e8e-4b50-af56-1f8cec203c68"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959eb",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:58.982Z",
+  "updated_on" : "2026-08-20T13:05:58.982Z",
+  "internal_id" : "0bc63b7e-8117-49c9-ac79-61226eb759df"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ea",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "BJ",
+  "created_on" : "2026-08-20T13:05:58.979Z",
+  "updated_on" : "2026-08-20T13:05:58.979Z",
+  "internal_id" : "8192d912-8353-4786-9b7d-11e7f0d04d59"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e9",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:58.974Z",
+  "updated_on" : "2026-08-20T13:05:58.974Z",
+  "internal_id" : "d28e7c1a-d3dc-421e-a777-dfe34a954fdf"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e8",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:58.970Z",
+  "updated_on" : "2026-08-20T13:05:58.970Z",
+  "internal_id" : "910ba7cf-1878-4b18-a897-ebfb3b07e1fa"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e7",
+  "degree" : null,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:58.954Z",
+  "updated_on" : "2026-08-20T13:05:58.954Z",
+  "internal_id" : "90b978fd-971a-4d87-9157-3cbd169d4832"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e6",
+  "degree" : 100,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:58.941Z",
+  "updated_on" : "2026-08-20T13:05:58.941Z",
+  "internal_id" : "cb62ce03-ef0d-4b41-adff-4a2947e9be99"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e5",
+  "degree" : 100,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:58.907Z",
+  "updated_on" : "2026-08-20T13:05:58.907Z",
+  "internal_id" : "107d4337-4adb-416d-a56d-143e22e33514"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e4",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:58.899Z",
+  "updated_on" : "2026-08-20T13:05:58.899Z",
+  "internal_id" : "bea2ebe3-0b30-41d5-b8fe-942b394a81f5"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e3",
+  "degree" : 100,
+  "resource_ref" : "00039ec4-ea92-4d4f-a2e4-76d3d3324c37",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.896Z",
+  "updated_on" : "2026-08-20T13:05:58.896Z",
+  "internal_id" : "66e9b045-d5e6-4806-b876-4127a1715948"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e2",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:58.895Z",
+  "updated_on" : "2026-08-20T13:05:58.895Z",
+  "internal_id" : "d1e9814f-5a7e-466f-9d55-946a8c332fbd"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e1",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:58.888Z",
+  "updated_on" : "2026-08-20T13:05:58.888Z",
+  "internal_id" : "fd768a6c-2084-4fd0-9709-693e6906d247"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959e0",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:58.884Z",
+  "updated_on" : "2026-08-20T13:05:58.884Z",
+  "internal_id" : "215d3c2b-70b2-484a-83ae-397e9e9aca72"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959df",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:58.882Z",
+  "updated_on" : "2026-08-20T13:05:58.882Z",
+  "internal_id" : "660afea5-09cd-41f7-9bcb-a53106032204"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959de",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:58.879Z",
+  "updated_on" : "2026-08-20T13:05:58.879Z",
+  "internal_id" : "e703a404-4b25-43ea-b43c-82c3f7d62e37"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959dd",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "RB",
+  "created_on" : "2026-08-20T13:05:58.869Z",
+  "updated_on" : "2026-08-20T13:05:58.869Z",
+  "internal_id" : "23ff4d6c-94b5-4b34-8a0c-86691a50b07f"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959dc",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:58.858Z",
+  "updated_on" : "2026-08-20T13:05:58.858Z",
+  "internal_id" : "05724176-d051-4c5f-bc29-62db55b2b4ec"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959db",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "PC",
+  "created_on" : "2026-08-20T13:05:58.825Z",
+  "updated_on" : "2026-08-20T13:05:58.825Z",
+  "internal_id" : "188ebea3-c5de-4d78-91b5-4e82b94c90d2"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959da",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "MRJ",
+  "created_on" : "2026-08-20T13:05:58.810Z",
+  "updated_on" : "2026-08-20T13:05:58.810Z",
+  "internal_id" : "fd49588c-ceff-4eb3-a87b-640b81e21d85"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d9",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:58.806Z",
+  "updated_on" : "2026-08-20T13:05:58.806Z",
+  "internal_id" : "5c7b91e3-de72-44c8-9e9e-3172262a4c54"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d8",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:58.799Z",
+  "updated_on" : "2026-08-20T13:05:58.799Z",
+  "internal_id" : "a720a38e-1343-49f3-ac16-47c83cc4c62a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d7",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:58.798Z",
+  "updated_on" : "2026-08-20T13:05:58.798Z",
+  "internal_id" : "d808beb9-143a-45de-b2a3-15159d69a978"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d6",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "IA",
+  "created_on" : "2026-08-20T13:05:58.791Z",
+  "updated_on" : "2026-08-20T13:05:58.791Z",
+  "internal_id" : "806683db-925e-408f-afaa-6e82e2c0e4bf"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d5",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:58.790Z",
+  "updated_on" : "2026-08-20T13:05:58.790Z",
+  "internal_id" : "7d687290-79a6-44a3-9e38-15c62cd08f2b"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d4",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:58.785Z",
+  "updated_on" : "2026-08-20T13:05:58.785Z",
+  "internal_id" : "73531473-ad4d-47b7-a17e-0fe24b6361db"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d3",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "FZ",
+  "created_on" : "2026-08-20T13:05:58.779Z",
+  "updated_on" : "2026-08-20T13:05:58.779Z",
+  "internal_id" : "8b88f2f0-8282-4bd4-b8e5-bc1b70d60dbb"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d2",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:58.765Z",
+  "updated_on" : "2026-08-20T13:05:58.765Z",
+  "internal_id" : "818223d1-b219-4633-96f7-ba8a5d43145e"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d1",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.746Z",
+  "updated_on" : "2026-08-20T13:05:58.746Z",
+  "internal_id" : "bdb161c3-1dff-47b1-853d-b1f87ada05dd"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959d0",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:58.725Z",
+  "updated_on" : "2026-08-20T13:05:58.725Z",
+  "internal_id" : "9542def3-dc12-4a33-8d96-9f159257238a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959cf",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "BJ",
+  "created_on" : "2026-08-20T13:05:58.715Z",
+  "updated_on" : "2026-08-20T13:05:58.715Z",
+  "internal_id" : "37df9e7a-68b2-4e64-afc3-a2bf8e87c275"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ce",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:58.713Z",
+  "updated_on" : "2026-08-20T13:05:58.713Z",
+  "internal_id" : "bd7a47b5-5c4e-4c63-9777-4370484639ac"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959cd",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "B9",
+  "created_on" : "2026-08-20T13:05:58.713Z",
+  "updated_on" : "2026-08-20T13:05:58.713Z",
+  "internal_id" : "01af9915-8beb-4850-b11d-8e2769206fbf"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959cc",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:58.709Z",
+  "updated_on" : "2026-08-20T13:05:58.709Z",
+  "internal_id" : "30494a1f-afe2-465c-acc1-c9011978baed"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959cb",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "5G",
+  "created_on" : "2026-08-20T13:05:58.706Z",
+  "updated_on" : "2026-08-20T13:05:58.706Z",
+  "internal_id" : "f59e42b0-c02a-48ee-8a1c-d09a31d3eb8b"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ca",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:58.702Z",
+  "updated_on" : "2026-08-20T13:05:58.702Z",
+  "internal_id" : "dd606549-1c7a-4764-8b40-08f05165220c"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c9",
+  "degree" : 100,
+  "resource_ref" : "deaed971-900c-479c-97ae-f7f5e8a0a4fd",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.691Z",
+  "updated_on" : "2026-08-20T13:05:58.691Z",
+  "internal_id" : "ba60fdea-e774-43bc-a8ba-5809d3a6dc13"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c8",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:58.676Z",
+  "updated_on" : "2026-08-20T13:05:58.676Z",
+  "internal_id" : "d309ef54-6c45-46a7-a59a-85bf4052b5cf"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c7",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:58.647Z",
+  "updated_on" : "2026-08-20T13:05:58.647Z",
+  "internal_id" : "c643697b-7674-4517-90cd-42f7605d3b22"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c6",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:58.640Z",
+  "updated_on" : "2026-08-20T13:05:58.640Z",
+  "internal_id" : "1ab3d416-4483-4fa5-a281-26d61a32f509"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c5",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:58.635Z",
+  "updated_on" : "2026-08-20T13:05:58.635Z",
+  "internal_id" : "aca9d933-d05e-40ad-8775-1bdb6cee672f"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c3",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:58.627Z",
+  "updated_on" : "2026-08-20T13:05:58.627Z",
+  "internal_id" : "6f45fe2d-63e6-4a20-80e9-7dff29308bb3"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c4",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:58.627Z",
+  "updated_on" : "2026-08-20T13:05:58.627Z",
+  "internal_id" : "6b743473-0a3d-47fa-b75c-d06775527aae"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c2",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:58.616Z",
+  "updated_on" : "2026-08-20T13:05:58.616Z",
+  "internal_id" : "d0ae02c2-3cec-4b7c-9100-0d9312177efe"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c1",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:58.615Z",
+  "updated_on" : "2026-08-20T13:05:58.615Z",
+  "internal_id" : "413202d2-40d7-4d46-838f-9643de4c53fa"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959c0",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:58.608Z",
+  "updated_on" : "2026-08-20T13:05:58.608Z",
+  "internal_id" : "56098f05-5d89-4c51-8429-156f7247742a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959bf",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.597Z",
+  "updated_on" : "2026-08-20T13:05:58.597Z",
+  "internal_id" : "6dcabc59-a679-43eb-ab20-a91b034f288a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959be",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:58.596Z",
+  "updated_on" : "2026-08-20T13:05:58.596Z",
+  "internal_id" : "cc14cd93-dba6-42a8-b24c-128762d565a6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959bd",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:58.564Z",
+  "updated_on" : "2026-08-20T13:05:58.564Z",
+  "internal_id" : "08c1954a-8a69-43fe-852f-0c1a2cf5b0a4"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959bc",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:58.551Z",
+  "updated_on" : "2026-08-20T13:05:58.551Z",
+  "internal_id" : "cff2b1ae-7947-4365-a0b0-a12bfe5059ac"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959bb",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:58.546Z",
+  "updated_on" : "2026-08-20T13:05:58.546Z",
+  "internal_id" : "003915b0-5505-4918-944f-84572c49cbee"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ba",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:58.540Z",
+  "updated_on" : "2026-08-20T13:05:58.540Z",
+  "internal_id" : "560976dd-5bf9-4257-9cd6-3723ebab193c"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b9",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:58.534Z",
+  "updated_on" : "2026-08-20T13:05:58.534Z",
+  "internal_id" : "d1834f25-3f55-4e2b-8b5f-ec2d3cc37787"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b8",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "7R",
+  "created_on" : "2026-08-20T13:05:58.533Z",
+  "updated_on" : "2026-08-20T13:05:58.533Z",
+  "internal_id" : "9f0d59aa-a421-4a42-9c0f-30f31fb85122"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b7",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.518Z",
+  "updated_on" : "2026-08-20T13:05:58.518Z",
+  "internal_id" : "911a4575-2626-4ac0-b015-ae66971763d7"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b6",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:58.511Z",
+  "updated_on" : "2026-08-20T13:05:58.511Z",
+  "internal_id" : "a16accaf-949f-4dfd-a1d0-01ed1476ca6a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b5",
+  "degree" : 100,
+  "resource_ref" : "214df281-c7e0-43d2-ade3-31a9bfbdbfb0",
+  "qualification_ref" : "0E",
+  "created_on" : "2026-08-20T13:05:58.510Z",
+  "updated_on" : "2026-08-20T13:05:58.510Z",
+  "internal_id" : "9ce46c71-fbf2-4ff3-856a-927842ac61fa"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b4",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:58.506Z",
+  "updated_on" : "2026-08-20T13:05:58.506Z",
+  "internal_id" : "d9a5f8a1-9453-425b-b954-d02615a195ab"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b3",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:58.472Z",
+  "updated_on" : "2026-08-20T13:05:58.472Z",
+  "internal_id" : "5c92f499-c7e7-4ff0-81a9-498356c94ff5"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b2",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.464Z",
+  "updated_on" : "2026-08-20T13:05:58.464Z",
+  "internal_id" : "a4ab5a13-097d-4a37-b7aa-953e346a161e"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b1",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:58.456Z",
+  "updated_on" : "2026-08-20T13:05:58.456Z",
+  "internal_id" : "5dcb324a-eaea-4231-b21f-33793f78764e"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959b0",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "7R",
+  "created_on" : "2026-08-20T13:05:58.433Z",
+  "updated_on" : "2026-08-20T13:05:58.433Z",
+  "internal_id" : "450b0b09-f1ff-41ab-b180-72d82a6c50d8"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959af",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:58.429Z",
+  "updated_on" : "2026-08-20T13:05:58.429Z",
+  "internal_id" : "0cdc25ed-bb9d-4fbe-b9dd-49b7e51eab60"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ad",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:58.424Z",
+  "updated_on" : "2026-08-20T13:05:58.424Z",
+  "internal_id" : "bc83f2ac-ae15-4259-ab83-b89cd315e653"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ac",
+  "degree" : 100,
+  "resource_ref" : "bf465ea2-c57f-4621-994d-dc424011e50b",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.424Z",
+  "updated_on" : "2026-08-20T13:05:58.424Z",
+  "internal_id" : "166d482a-52c0-4e08-8512-dcd0f8b3a5d7"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959ab",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "U7",
+  "created_on" : "2026-08-20T13:05:58.416Z",
+  "updated_on" : "2026-08-20T13:05:58.416Z",
+  "internal_id" : "20e174ad-ad2d-4cb9-a5d1-027a8500747d"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959aa",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:58.412Z",
+  "updated_on" : "2026-08-20T13:05:58.412Z",
+  "internal_id" : "9a0e9eff-0e0a-4d45-8431-889e0f85a3ae"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a9",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:58.407Z",
+  "updated_on" : "2026-08-20T13:05:58.407Z",
+  "internal_id" : "d60006ee-674d-4cf0-a265-2c22adb4a145"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a8",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "RT",
+  "created_on" : "2026-08-20T13:05:58.396Z",
+  "updated_on" : "2026-08-20T13:05:58.396Z",
+  "internal_id" : "f055e1ce-cd20-4a6f-b62b-76ed70f00cef"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a7",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:58.379Z",
+  "updated_on" : "2026-08-20T13:05:58.379Z",
+  "internal_id" : "fc83bdd0-8c90-4429-9ec3-036104a00be1"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a6",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:58.366Z",
+  "updated_on" : "2026-08-20T13:05:58.366Z",
+  "internal_id" : "6b10233a-928f-467e-8446-bc4dc3bec2b6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a5",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:58.346Z",
+  "updated_on" : "2026-08-20T13:05:58.346Z",
+  "internal_id" : "515c8287-5dcc-4d6b-b6b8-faa0c173ff19"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a3",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:58.330Z",
+  "updated_on" : "2026-08-20T13:05:58.330Z",
+  "internal_id" : "a80aeebf-21b8-4156-bc50-ae59039d9ba9"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a4",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:58.329Z",
+  "updated_on" : "2026-08-20T13:05:58.329Z",
+  "internal_id" : "b9742fd8-9563-4169-bc4e-0a5e0c86288b"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a2",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:58.323Z",
+  "updated_on" : "2026-08-20T13:05:58.323Z",
+  "internal_id" : "d3278b9c-26c7-4d79-bea3-086bccbb9c47"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a1",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.318Z",
+  "updated_on" : "2026-08-20T13:05:58.318Z",
+  "internal_id" : "a8f76058-b3a0-487c-a6a2-859081a9647d"
+}, {
+  "_id" : "6a86fbb6c1eadf30f08959a0",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:58.310Z",
+  "updated_on" : "2026-08-20T13:05:58.310Z",
+  "internal_id" : "d3ea3cfa-ec46-420c-b1f9-252f6e494474"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599f",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:58.310Z",
+  "updated_on" : "2026-08-20T13:05:58.310Z",
+  "internal_id" : "57272de5-578e-4932-ab8c-fb0db90d7e64"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599e",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:58.302Z",
+  "updated_on" : "2026-08-20T13:05:58.302Z",
+  "internal_id" : "1090b262-db8e-4914-a2dd-715c601eeac6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599d",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:58.285Z",
+  "updated_on" : "2026-08-20T13:05:58.285Z",
+  "internal_id" : "1f1e280a-6425-40b9-9dbb-242bedef0af6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599c",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "7R",
+  "created_on" : "2026-08-20T13:05:58.278Z",
+  "updated_on" : "2026-08-20T13:05:58.278Z",
+  "internal_id" : "62b4d4b2-479b-4607-ad64-65b4a982d2f1"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599b",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:58.262Z",
+  "updated_on" : "2026-08-20T13:05:58.262Z",
+  "internal_id" : "dd1a8e1e-ead4-4306-ace9-f31c7c092ec2"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089599a",
+  "degree" : 100,
+  "resource_ref" : "c12b1219-8dd8-4f0e-a026-1c549ad0e28d",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.250Z",
+  "updated_on" : "2026-08-20T13:05:58.250Z",
+  "internal_id" : "202a75f7-2c8d-40ab-9d59-d84c668b7dcd"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895999",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:58.242Z",
+  "updated_on" : "2026-08-20T13:05:58.242Z",
+  "internal_id" : "fb765a85-250f-4a46-9707-3b2bc9a105b9"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895998",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:58.225Z",
+  "updated_on" : "2026-08-20T13:05:58.225Z",
+  "internal_id" : "580f87a3-1917-4733-b18b-e52a1434bdf2"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895997",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:58.214Z",
+  "updated_on" : "2026-08-20T13:05:58.214Z",
+  "internal_id" : "a665603e-e51f-47d5-b420-fbcf11b25ddb"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895996",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:58.198Z",
+  "updated_on" : "2026-08-20T13:05:58.198Z",
+  "internal_id" : "e2bf43f9-fa33-45e9-a263-e7479c2b5db8"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895995",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:58.185Z",
+  "updated_on" : "2026-08-20T13:05:58.185Z",
+  "internal_id" : "40efb2de-58d0-4ead-a5e8-1eb16fc37e3d"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895994",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:58.173Z",
+  "updated_on" : "2026-08-20T13:05:58.173Z",
+  "internal_id" : "3003159d-87d1-4d3c-ab9a-193372658a8d"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895993",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:58.171Z",
+  "updated_on" : "2026-08-20T13:05:58.171Z",
+  "internal_id" : "a1bfbba4-1be3-433c-a376-75447ccf6576"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895992",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:58.159Z",
+  "updated_on" : "2026-08-20T13:05:58.159Z",
+  "internal_id" : "92308f90-f73b-4fba-8753-c26b6c7896e8"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895991",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:58.142Z",
+  "updated_on" : "2026-08-20T13:05:58.142Z",
+  "internal_id" : "cba9d430-ff69-4c34-a69c-545c8e101bba"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895990",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:58.125Z",
+  "updated_on" : "2026-08-20T13:05:58.125Z",
+  "internal_id" : "b0447a22-2150-4129-8383-44a7f8204565"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598f",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:58.118Z",
+  "updated_on" : "2026-08-20T13:05:58.118Z",
+  "internal_id" : "521e488e-e712-4d92-93ed-78fe11becb66"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598e",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:58.101Z",
+  "updated_on" : "2026-08-20T13:05:58.101Z",
+  "internal_id" : "3a47ec68-77c6-4fec-b035-57909b47d92a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598d",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:58.082Z",
+  "updated_on" : "2026-08-20T13:05:58.082Z",
+  "internal_id" : "62f6b2a6-b586-4502-848d-73d7876eb130"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598c",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:58.076Z",
+  "updated_on" : "2026-08-20T13:05:58.076Z",
+  "internal_id" : "7d24f05e-abd5-442e-8074-a3a6ec7492f6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598b",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:58.072Z",
+  "updated_on" : "2026-08-20T13:05:58.072Z",
+  "internal_id" : "12fbc6fd-6209-4930-8570-2099a5a7a2ed"
+}, {
+  "_id" : "6a86fbb6c1eadf30f089598a",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:58.058Z",
+  "updated_on" : "2026-08-20T13:05:58.058Z",
+  "internal_id" : "734c4302-766f-470c-97c7-ce875f2c5df6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895989",
+  "degree" : 100,
+  "resource_ref" : "015d7c54-8180-4a37-89a3-e39d5d8cd997",
+  "qualification_ref" : "0E",
+  "created_on" : "2026-08-20T13:05:58.052Z",
+  "updated_on" : "2026-08-20T13:05:58.052Z",
+  "internal_id" : "efd392f1-217c-44ae-909b-b59a99adf3b6"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895988",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:58.046Z",
+  "updated_on" : "2026-08-20T13:05:58.046Z",
+  "internal_id" : "f5aee8a0-c9a1-4df3-88f9-7d09a7f52bae"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895987",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:58.033Z",
+  "updated_on" : "2026-08-20T13:05:58.033Z",
+  "internal_id" : "8092910c-7785-4dad-bf7e-72079b768a1f"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895986",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:58.026Z",
+  "updated_on" : "2026-08-20T13:05:58.026Z",
+  "internal_id" : "8db31241-68e6-44fb-b448-7d69305f01e0"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895985",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:58.025Z",
+  "updated_on" : "2026-08-20T13:05:58.025Z",
+  "internal_id" : "ff0cb41a-6c23-49bc-8df5-46c7cce4e92a"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895984",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "RT",
+  "created_on" : "2026-08-20T13:05:58.009Z",
+  "updated_on" : "2026-08-20T13:05:58.009Z",
+  "internal_id" : "511390c5-eb5e-4521-8d7d-be6687716533"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895983",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:57.987Z",
+  "updated_on" : "2026-08-20T13:05:57.987Z",
+  "internal_id" : "a5f54ffa-c618-4786-abcc-62d18c0965cb"
+}, {
+  "_id" : "6a86fbb6c1eadf30f0895982",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:57.986Z",
+  "updated_on" : "2026-08-20T13:05:57.986Z",
+  "internal_id" : "54a66383-37a9-4045-a26b-2cd70636e63e"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895981",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:57.973Z",
+  "updated_on" : "2026-08-20T13:05:57.973Z",
+  "internal_id" : "16a02bb7-6e17-46e2-8a2f-21f40fecc259"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597f",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:57.957Z",
+  "updated_on" : "2026-08-20T13:05:57.957Z",
+  "internal_id" : "bc0bff52-e028-4b20-8a3a-b2eaeeda3cc9"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895980",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "HY",
+  "created_on" : "2026-08-20T13:05:57.957Z",
+  "updated_on" : "2026-08-20T13:05:57.957Z",
+  "internal_id" : "5e4ce309-6593-4356-96f1-aaecb056347c"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597e",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:57.951Z",
+  "updated_on" : "2026-08-20T13:05:57.951Z",
+  "internal_id" : "6a1444fc-4c77-42b8-8cf7-0b8226c633d8"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597d",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:57.946Z",
+  "updated_on" : "2026-08-20T13:05:57.946Z",
+  "internal_id" : "f87681fb-eb11-48a9-9ff1-0ad21c9ad775"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597b",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:57.934Z",
+  "updated_on" : "2026-08-20T13:05:57.934Z",
+  "internal_id" : "e6b8b6b7-9eca-4439-9874-9a263b29e054"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597c",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:57.934Z",
+  "updated_on" : "2026-08-20T13:05:57.934Z",
+  "internal_id" : "bbd4fb2c-8cad-4db7-8f85-5f05caa04dc9"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089597a",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:57.910Z",
+  "updated_on" : "2026-08-20T13:05:57.910Z",
+  "internal_id" : "5c1af6f6-63fa-4c10-832c-e1e504e29cc5"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895979",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:57.907Z",
+  "updated_on" : "2026-08-20T13:05:57.907Z",
+  "internal_id" : "0a48d2f3-86fd-4bbe-90a5-f7242a6efdd1"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895978",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:57.890Z",
+  "updated_on" : "2026-08-20T13:05:57.890Z",
+  "internal_id" : "57af84b9-c8af-4605-9fc4-01c6639b70b8"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895977",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "7R",
+  "created_on" : "2026-08-20T13:05:57.882Z",
+  "updated_on" : "2026-08-20T13:05:57.882Z",
+  "internal_id" : "80242c22-da43-4660-b81e-00461b4b596c"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895976",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:57.880Z",
+  "updated_on" : "2026-08-20T13:05:57.880Z",
+  "internal_id" : "68e125af-d320-4a36-9c6b-8c6c56147b94"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895975",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:57.869Z",
+  "updated_on" : "2026-08-20T13:05:57.869Z",
+  "internal_id" : "13637948-21fd-428b-b04b-ee4a23f31b1a"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895974",
+  "degree" : 100,
+  "resource_ref" : "c3db10c0-f643-45ea-9916-67d1317535ed",
+  "qualification_ref" : "0E",
+  "created_on" : "2026-08-20T13:05:57.867Z",
+  "updated_on" : "2026-08-20T13:05:57.867Z",
+  "internal_id" : "d96b9098-a860-4aaf-b0cf-a7a9ed86ad19"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895973",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:57.857Z",
+  "updated_on" : "2026-08-20T13:05:57.857Z",
+  "internal_id" : "2b74220c-2923-4241-89a5-926697f9f2dc"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895972",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:57.850Z",
+  "updated_on" : "2026-08-20T13:05:57.850Z",
+  "internal_id" : "3f782163-4e73-46c5-9c20-3ba00dd8e355"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895971",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:57.844Z",
+  "updated_on" : "2026-08-20T13:05:57.844Z",
+  "internal_id" : "28060215-38ae-4070-9f55-5d9200a9602e"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895970",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:57.810Z",
+  "updated_on" : "2026-08-20T13:05:57.810Z",
+  "internal_id" : "aca909bb-fac8-408c-b346-ee21c57b525f"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596f",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "R3",
+  "created_on" : "2026-08-20T13:05:57.809Z",
+  "updated_on" : "2026-08-20T13:05:57.809Z",
+  "internal_id" : "5c047f7f-e3d5-4e81-8e7d-917450e46982"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596e",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "KA",
+  "created_on" : "2026-08-20T13:05:57.805Z",
+  "updated_on" : "2026-08-20T13:05:57.805Z",
+  "internal_id" : "ca5ae0c2-9320-4516-be48-579350548f3f"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596d",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "J2",
+  "created_on" : "2026-08-20T13:05:57.797Z",
+  "updated_on" : "2026-08-20T13:05:57.797Z",
+  "internal_id" : "05d35b15-3c7e-4df8-9e71-dccf2826fcf8"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596c",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:57.789Z",
+  "updated_on" : "2026-08-20T13:05:57.789Z",
+  "internal_id" : "d3c5f011-2a8b-42c5-9720-2a87af371d41"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596b",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:57.776Z",
+  "updated_on" : "2026-08-20T13:05:57.776Z",
+  "internal_id" : "73523e17-5061-4951-8e20-7238ec07d72e"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089596a",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "DV",
+  "created_on" : "2026-08-20T13:05:57.773Z",
+  "updated_on" : "2026-08-20T13:05:57.773Z",
+  "internal_id" : "51661996-48cc-4e0a-8561-3f494bf0ffc1"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895969",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:57.768Z",
+  "updated_on" : "2026-08-20T13:05:57.768Z",
+  "internal_id" : "3a7913b8-53b2-44fb-acec-af41a2b83e69"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895968",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "C6",
+  "created_on" : "2026-08-20T13:05:57.763Z",
+  "updated_on" : "2026-08-20T13:05:57.763Z",
+  "internal_id" : "b3d5c716-6080-48f4-a37f-7b8bf65bf8b8"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895967",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "B2",
+  "created_on" : "2026-08-20T13:05:57.761Z",
+  "updated_on" : "2026-08-20T13:05:57.761Z",
+  "internal_id" : "3f5b3a58-d297-4611-974d-f5e1f42d8e9b"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895966",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "A9",
+  "created_on" : "2026-08-20T13:05:57.732Z",
+  "updated_on" : "2026-08-20T13:05:57.732Z",
+  "internal_id" : "44ad1d45-e600-46ff-8d14-87b559a36a99"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895965",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:57.719Z",
+  "updated_on" : "2026-08-20T13:05:57.719Z",
+  "internal_id" : "0672aa31-87a8-4af2-8b5b-877165c16959"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895963",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "6R",
+  "created_on" : "2026-08-20T13:05:57.710Z",
+  "updated_on" : "2026-08-20T13:05:57.710Z",
+  "internal_id" : "f1dc94cd-b8d6-420d-9c0d-5fdb687d9877"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895964",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:57.710Z",
+  "updated_on" : "2026-08-20T13:05:57.710Z",
+  "internal_id" : "621f8bde-5fed-4992-9f83-edf35f4f05a4"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895962",
+  "degree" : 100,
+  "resource_ref" : "e7fbcc58-6ca1-4a65-b77d-094fc70b1461",
+  "qualification_ref" : "0E",
+  "created_on" : "2026-08-20T13:05:57.701Z",
+  "updated_on" : "2026-08-20T13:05:57.701Z",
+  "internal_id" : "d350709c-8535-4c7e-be69-f7b28594fe09"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895961",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:57.692Z",
+  "updated_on" : "2026-08-20T13:05:57.692Z",
+  "internal_id" : "6f57a8cf-0d33-4f2b-a6b0-cd238971db57"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895960",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "FV",
+  "created_on" : "2026-08-20T13:05:57.688Z",
+  "updated_on" : "2026-08-20T13:05:57.688Z",
+  "internal_id" : "ebe4cc51-29aa-4cf8-8b09-d1fe98275be5"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595f",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "F7",
+  "created_on" : "2026-08-20T13:05:57.683Z",
+  "updated_on" : "2026-08-20T13:05:57.683Z",
+  "internal_id" : "19d94945-22af-4bb4-8f42-934dd7f6db6b"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595e",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "DP",
+  "created_on" : "2026-08-20T13:05:57.678Z",
+  "updated_on" : "2026-08-20T13:05:57.678Z",
+  "internal_id" : "4cac3075-c65c-433b-b22b-03c594e1e83a"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595d",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "A4",
+  "created_on" : "2026-08-20T13:05:57.665Z",
+  "updated_on" : "2026-08-20T13:05:57.665Z",
+  "internal_id" : "5ae45a4e-2b1e-4e35-9637-a0b1918c0555"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595c",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "7R",
+  "created_on" : "2026-08-20T13:05:57.641Z",
+  "updated_on" : "2026-08-20T13:05:57.641Z",
+  "internal_id" : "df89cae4-e00e-4c1f-98e6-aed2bb82341e"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595b",
+  "degree" : 100,
+  "resource_ref" : "4e3804bb-c87e-49c6-95f6-3adfa2e9cb24",
+  "qualification_ref" : "4G",
+  "created_on" : "2026-08-20T13:05:57.630Z",
+  "updated_on" : "2026-08-20T13:05:57.630Z",
+  "internal_id" : "afbf7618-f168-4440-bc77-07e22ce8ae4c"
+}, {
+  "_id" : "6a86fbb5c1eadf30f089595a",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "ZF",
+  "created_on" : "2026-08-20T13:05:57.624Z",
+  "updated_on" : "2026-08-20T13:05:57.624Z",
+  "internal_id" : "f880fde4-745e-46a0-89e2-780d3faa91d9"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895959",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "XY",
+  "created_on" : "2026-08-20T13:05:57.622Z",
+  "updated_on" : "2026-08-20T13:05:57.622Z",
+  "internal_id" : "79c59bcb-ceb7-4d96-984c-6ed700bf92c8"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895958",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "WZ",
+  "created_on" : "2026-08-20T13:05:57.619Z",
+  "updated_on" : "2026-08-20T13:05:57.619Z",
+  "internal_id" : "e4a9a896-3e81-42dd-b821-f910c4386635"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895957",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "VF",
+  "created_on" : "2026-08-20T13:05:57.612Z",
+  "updated_on" : "2026-08-20T13:05:57.612Z",
+  "internal_id" : "d3b71776-8dab-43c7-9406-069c16c19162"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895956",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "UT",
+  "created_on" : "2026-08-20T13:05:57.603Z",
+  "updated_on" : "2026-08-20T13:05:57.603Z",
+  "internal_id" : "c404474c-5520-4b2b-869a-73b0a0681142"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895955",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "VGV",
+  "created_on" : "2026-08-20T13:05:57.600Z",
+  "updated_on" : "2026-08-20T13:05:57.600Z",
+  "internal_id" : "372fc39a-d2e2-4009-8baa-a5e2faa50bd3"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895954",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "TK",
+  "created_on" : "2026-08-20T13:05:57.588Z",
+  "updated_on" : "2026-08-20T13:05:57.588Z",
+  "internal_id" : "a1c398d4-673d-4a0a-9a00-258cd14ada19"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895953",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "U7",
+  "created_on" : "2026-08-20T13:05:57.588Z",
+  "updated_on" : "2026-08-20T13:05:57.588Z",
+  "internal_id" : "717b8996-1a03-4664-8157-50697d6fac4b"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895952",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "SZ",
+  "created_on" : "2026-08-20T13:05:57.565Z",
+  "updated_on" : "2026-08-20T13:05:57.565Z",
+  "internal_id" : "bced7745-9ba7-411a-85b5-857f848d0faa"
+}, {
+  "_id" : "6a86fbb5c1eadf30f0895951",
+  "degree" : 100,
+  "resource_ref" : "76815fd0-3ead-4e3e-9267-8b55115b6053",
+  "qualification_ref" : "NE",
+  "created_on" : "2026-08-20T13:05:57.539Z",
+  "updated_on" : "2026-08-20T13:05:57.539Z",
+  "internal_id" : "964ebc0f-d9c5-4a0c-935b-45f8ba40ab34"
+} ]

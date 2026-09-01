@@ -9,7 +9,7 @@ import {
   MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
   UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
 } from '@ant-design/icons';
-import { parseCSV } from './utils/dataParser';
+import { parseCSV, parseJsonExport } from './utils/dataParser';
 import { runOptimizer, reassignDelayedConflicts } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
@@ -22,7 +22,7 @@ const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 const { Text } = Typography;
 
 function SidebarContent({
-  isDark, hasData, fileRef, handleFileUpload, handleDemoLoad,
+  isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
   availableDates, selectedDate, setSelectedDate, setOptimizerRan,
   handleRunOptimizer, handleResetBacklog,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
@@ -50,7 +50,10 @@ function SidebarContent({
             Загрузить CSV
           </Button>
           <Button block onClick={() => { handleDemoLoad(); onClose?.(); }}>
-            🎬 Демо-данные
+            🎬 Демо-данные (CSV)
+          </Button>
+          <Button block onClick={() => { handleDemoLoadJson(); onClose?.(); }}>
+            🗂️ Демо-данные (полный набор)
           </Button>
         </Space>
       </div>
@@ -169,21 +172,25 @@ export default function App() {
   );
   const backlogCount = currentTasks.filter(t => t.employee === 'Не назначено').length;
 
+  function applyParsedData({ tasks, staffDB: db, colorMap: cm }) {
+    const dates = [...new Set(tasks.map(t => t.date))].sort();
+    const types = [...new Set(tasks.map(t => t.name))];
+    setTasksDB(tasks);
+    setStaffDB(db);
+    setColorMap(cm);
+    setSelectedDate(dates[0]);
+    setFilterTypes(types);
+    setFilterFlight('');
+    setOptimizerRan(false);
+  }
+
   function loadData(text) {
     setIsLoading(true);
     setError(null);
     try {
-      const { tasks, staffDB: db, colorMap: cm } = parseCSV(text);
-      if (tasks.length === 0) throw new Error('CSV не содержит корректных данных');
-      const dates = [...new Set(tasks.map(t => t.date))].sort();
-      const types = [...new Set(tasks.map(t => t.name))];
-      setTasksDB(tasks);
-      setStaffDB(db);
-      setColorMap(cm);
-      setSelectedDate(dates[0]);
-      setFilterTypes(types);
-      setFilterFlight('');
-      setOptimizerRan(false);
+      const parsed = parseCSV(text);
+      if (parsed.tasks.length === 0) throw new Error('CSV не содержит корректных данных');
+      applyParsedData(parsed);
     } catch (e) {
       setError(`Ошибка загрузки: ${e.message}`);
     } finally {
@@ -207,6 +214,28 @@ export default function App() {
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
       .then(loadData)
       .catch(e => { setError(`Демо-данные недоступны: ${e.message}`); setIsLoading(false); });
+  }
+
+  function handleDemoLoadJson() {
+    setIsLoading(true);
+    setError(null);
+    const files = [
+      'tb_sub_orders', 'tb_shifts', 'tb_resources',
+      'tb_res_qual', 'tb_relation_resource_qualification', 'tb_relation_shift_qualification',
+    ];
+    Promise.all(files.map(name =>
+      fetch(`./demo/${name}.json`).then(r => {
+        if (!r.ok) throw new Error(`${name}.json: HTTP ${r.status}`);
+        return r.json();
+      })
+    ))
+      .then(([orders, shifts, resources, resQual, resourceQualifications, shiftQualifications]) => {
+        const parsed = parseJsonExport({ orders, shifts, resources, resQual, resourceQualifications, shiftQualifications });
+        if (parsed.tasks.length === 0) throw new Error('Демо-данные не содержат задач');
+        applyParsedData(parsed);
+      })
+      .catch(e => setError(`Демо-данные недоступны: ${e.message}`))
+      .finally(() => setIsLoading(false));
   }
 
   function handleRunOptimizer() {
