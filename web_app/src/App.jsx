@@ -184,7 +184,8 @@ export default function App() {
   // single selectedDate; only the chart's own data feed is widened.
   const windowDates = useMemo(() => {
     if (!selectedDate) return [];
-    return Array.from({ length: GANTT_WINDOW_DAYS }, (_, i) => shiftYMD(selectedDate, i));
+    // Centered on selectedDate: one day back, the date itself, one day forward.
+    return Array.from({ length: GANTT_WINDOW_DAYS }, (_, i) => shiftYMD(selectedDate, i - 1));
   }, [selectedDate]);
   const ganttTasks = useMemo(
     () => tasksDB.filter(t => windowDates.includes(t.date)),
@@ -344,7 +345,7 @@ export default function App() {
       label: (
         <span style={{ fontWeight: 600 }}>
           <BarChartOutlined style={{ marginRight: 8 }} />
-          Оперативный план-график ({ganttTasks.length} задач за {GANTT_WINDOW_DAYS} дн.)
+          Оперативный план-график ({ganttTasks.length} задач, ±1 сутки от даты)
         </span>
       ),
       children: (
@@ -360,6 +361,7 @@ export default function App() {
             tasks={ganttTasks}
             staffShifts={ganttStaff}
             windowDays={GANTT_WINDOW_DAYS}
+            windowStart={windowDates[0]}
             colorMap={colorMap}
             selectedDate={selectedDate}
             filterTypes={filterTypes}
