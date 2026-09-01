@@ -32,8 +32,20 @@ function shiftYMD(dateStr, days) {
   return `${y}-${m}-${day}`;
 }
 
+// Slot key -> the parseJsonExport argument name it feeds, and the label shown
+// next to its own upload input.
+const JSON_FILE_SLOTS = [
+  { key: 'orders', label: 'tb_sub_orders' },
+  { key: 'shifts', label: 'tb_shifts' },
+  { key: 'resources', label: 'tb_resources' },
+  { key: 'resQual', label: 'tb_res_qual' },
+  { key: 'resourceQualifications', label: 'tb_relation_resource_qualification' },
+  { key: 'shiftQualifications', label: 'tb_relation_shift_qualification' },
+];
+
 function SidebarContent({
   isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
+  manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
   availableDates, selectedDate, setSelectedDate, setOptimizerRan,
   handleRunOptimizer, handleResetBacklog,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
@@ -67,6 +79,53 @@ function SidebarContent({
             🗂️ Демо-данные (полный набор)
           </Button>
         </Space>
+
+        <Collapse
+          ghost
+          size="small"
+          style={{ marginTop: 8 }}
+          items={[{
+            key: 'manual-json',
+            label: <span style={{ fontSize: 12 }}>📦 Загрузить JSON вручную (6 файлов)</span>,
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                {JSON_FILE_SLOTS.map(({ key, label }) => {
+                  const slot = manualFiles[key];
+                  return (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+                      <input
+                        type="file"
+                        accept=".json,.txt"
+                        onChange={e => handleManualFileChange(key, e)}
+                        style={{ fontSize: 11, width: '100%' }}
+                      />
+                      {slot?.error && (
+                        <div style={{ fontSize: 11, color: '#ff4d4f' }}>Ошибка: {slot.error}</div>
+                      )}
+                      {slot?.data && !slot.error && (
+                        <div style={{ fontSize: 11, color: '#52c41a' }}>✓ {slot.filename} ({slot.data.length})</div>
+                      )}
+                    </div>
+                  );
+                })}
+                <Space style={{ width: '100%' }}>
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={!manualAllReady}
+                    onClick={() => { handleManualJsonLoad(); onClose?.(); }}
+                  >
+                    Загрузить
+                  </Button>
+                  <Button size="small" onClick={handleManualJsonClear}>
+                    Очистить
+                  </Button>
+                </Space>
+              </Space>
+            ),
+          }]}
+        />
       </div>
 
       {hasData && (
@@ -158,7 +217,10 @@ export default function App() {
   const [isDark, setIsDark] = useState(false);
   const [mobileBroken, setMobileBroken] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [manualFiles, setManualFiles] = useState({});
   const fileRef = useRef();
+
+  const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
 
   useEffect(() => {
     document.body.style.background = isDark ? '#0d0d0d' : '#f5f5f5';
@@ -273,6 +335,44 @@ export default function App() {
       .finally(() => setIsLoading(false));
   }
 
+  function handleManualFileChange(key, e) {
+    const file = e.target.files[0];
+    e.target.value = ''; // allow re-selecting the same file after a fix
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!Array.isArray(data)) throw new Error('ожидался JSON-массив');
+        setManualFiles(prev => ({ ...prev, [key]: { filename: file.name, data, error: null } }));
+      } catch (err) {
+        setManualFiles(prev => ({ ...prev, [key]: { filename: file.name, data: null, error: err.message } }));
+      }
+    };
+    reader.onerror = () => setManualFiles(prev => ({ ...prev, [key]: { filename: file.name, data: null, error: 'не удалось прочитать файл' } }));
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  function handleManualJsonLoad() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const args = {};
+      for (const { key } of JSON_FILE_SLOTS) args[key] = manualFiles[key]?.data;
+      const parsed = parseJsonExport(args);
+      if (parsed.tasks.length === 0) throw new Error('Загруженные файлы не содержат задач');
+      applyParsedData(parsed);
+    } catch (e) {
+      setError(`Ошибка загрузки: ${e.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleManualJsonClear() {
+    setManualFiles({});
+  }
+
   function handleRunOptimizer() {
     const updated = runOptimizer(tasksDB, staffDB, selectedDate);
     setTasksDB(updated);
@@ -331,6 +431,7 @@ export default function App() {
 
   const sidebarProps = {
     isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
+    manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
     availableDates, selectedDate, setSelectedDate, setOptimizerRan,
     handleRunOptimizer, handleResetBacklog,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
