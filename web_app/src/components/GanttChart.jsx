@@ -133,7 +133,9 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
       };
     });
 
-    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount: yOrder.length };
+    const legendEntries = orderedEntries.map(([name]) => ({ name, color: colorMap[name] || '#888' }));
+
+    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount: yOrder.length, legendEntries };
   }, [tasks, colorMap, selectedDate, filterTypes, filterFlight, expanded]);
 
   function toggleEmployee(emp) {
@@ -152,13 +154,13 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
     );
   }
 
-  const { traces, yOrderBottomUp, rowsTopDown, rowCount } = plotData;
+  const { traces, yOrderBottomUp, rowsTopDown, rowCount, legendEntries } = plotData;
 
   const dateObj = new Date(selectedDate + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
 
   const MARGIN_T = 4;
-  const MARGIN_B = 54;
+  const MARGIN_B = 8;
   const chartH     = Math.max(300, rowCount * ROW_PX + MARGIN_T + MARGIN_B);
   const containerH = Math.min(chartH, 560);
 
@@ -182,7 +184,7 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
           data={[]}
           layout={{
             height: 44,
-            margin: { l: ML, r: 16, t: 6, b: 28 },
+            margin: { l: ML, r: 16, t: 6, b: 28, autoexpand: false },
             xaxis: xAxisConfig(dateObj, nextDay, fontColor, gridColor, true),
             yaxis: { visible: false, fixedrange: true },
             paper_bgcolor: 'rgba(0,0,0,0)',
@@ -246,8 +248,8 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
               height: chartH,
               barmode: 'overlay',
               bargap: 0.15,
-              showlegend: true,
-              margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B },
+              showlegend: false,
+              margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B, autoexpand: false },
               xaxis: {
                 ...xAxisConfig(dateObj, nextDay, fontColor, gridColor, false),
                 showgrid: true,
@@ -259,12 +261,6 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
                 showticklabels: false,
                 automargin: false,
                 gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
-              },
-              legend: {
-                orientation: 'h',
-                y: -0.06,
-                yanchor: 'top',
-                font: { size: 12, color: fontColor },
               },
               hovermode: 'closest',
               hoverdistance: 2,
@@ -284,6 +280,28 @@ export default function GanttChart({ tasks, colorMap, selectedDate, filterTypes,
             useResizeHandler
           />
         </div>
+      </div>
+
+      {/* ── Custom legend — rendered as plain HTML, outside Plotly's layout
+             system entirely, so a long task-type list can never blow up
+             Plotly's auto-margin and desync the label column from the bars
+             (that's what happened when this used Plotly's built-in legend). */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '4px 16px',
+          padding: '10px 16px',
+          borderTop: `1px solid ${borderClr}`,
+          background: plotBg,
+        }}
+      >
+        {legendEntries.map(({ name, color }) => (
+          <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: fontColor }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
+            {name}
+          </span>
+        ))}
       </div>
     </div>
   );
