@@ -295,7 +295,7 @@ export default function App() {
   const hasData = tasksDB.length > 0;
 
   const sidebarProps = {
-    isDark, hasData, fileRef, handleFileUpload, handleDemoLoad,
+    isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
     availableDates, selectedDate, setSelectedDate, setOptimizerRan,
     handleRunOptimizer, handleResetBacklog,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
