@@ -124,12 +124,15 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
       }
     }
 
-    // Pass B: relax shift constraint (overtime), still no conflicts
+    // Pass B: relax only the shift END boundary (stay a little late to
+    // finish) — still requires the task to START during the shift, and
+    // still no conflicts.
     if (!bestStaff) {
       let bestLoad = Infinity;
       for (const s of staff) {
         if (s.name === currentEmp) continue;
         if (!hasAllQuals(s.quals, task)) continue;
+        if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
         if (hasConflict(assignedTasks[s.name] || [], task)) continue;
         const load = (assignedTasks[s.name] || []).length;
         if (load < bestLoad) { bestLoad = load; bestStaff = s; }
@@ -275,15 +278,18 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     if (!resolved) remaining.push(task);
   }
 
-  // ── PASS 3: Relax shift constraint (overtime / boundary extension) ────────
-  // A qualified employee exists but the task falls slightly outside their shift.
-  // Assign to the least-loaded qualified employee who has no time conflict.
+  // ── PASS 3: Relax shift constraint (finish slightly late) ─────────────────
+  // A qualified employee exists but the task runs a bit past their shift end.
+  // Only the END boundary is relaxed — the task must still START during the
+  // employee's shift, so this is "stay a little late to finish", never
+  // "show up hours after your shift ended". Assign to the least-loaded
+  // qualified employee who has no time conflict.
   let forced = [];
   for (const task of remaining) {
     let bestStaff = null, bestLoad = Infinity;
     for (const s of staff) {
       if (!hasAllQuals(s.quals, task)) continue;
-      // Shift check removed intentionally — allow overtime assignment
+      if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const load = (assignedTasks[s.name] || []).length;
       if (load < bestLoad) { bestLoad = load; bestStaff = s; }
@@ -291,17 +297,20 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     bestStaff ? commit(result, assignedTasks, task.id, bestStaff.name) : forced.push(task);
   }
 
-  // ── PASS 4: Force assign – last resort, ignore all time conflicts ─────────
-  // Assign to the least-loaded employee who has the required qualification.
-  // This guarantees zero backlog as long as any qualified staff exists.
+  // ── PASS 4: Force assign – last resort, ignore only conflicts ─────────────
+  // Assign to the least-loaded employee who has the required qualification
+  // AND is actually on shift when the task starts — this ignores conflicts
+  // with other assigned tasks (ODO-222-style genuine last resort) but still
+  // never sends someone to a task hours outside their working hours. If no
+  // one is on shift for it, the task stays in the backlog instead.
   for (const task of forced) {
     const qualified = staff
-      .filter(s => hasAllQuals(s.quals, task))
+      .filter(s => hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.start <= s.shiftEnd)
       .sort((a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length);
     if (qualified.length > 0) {
       commit(result, assignedTasks, task.id, qualified[0].name);
     }
-    // If truly no qualified staff exists, the task stays unassigned
+    // If truly no staff is on shift when the task starts, it stays unassigned
   }
 
   return result;
