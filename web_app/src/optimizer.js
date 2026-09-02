@@ -97,19 +97,50 @@ function getLastTaskExitPos(empTasks, beforeTime) {
   return prior.length > 0 ? (prior[0].exitPos ?? prior[0].pos) : null;
 }
 
+// Mirror of the above, looking forward: where the employee needs to be for
+// their next task after this one — needed for the insertion-cost scoring
+// below, which cares about both neighbours of a slot, not just the one
+// before it.
+function getNextTaskEntryPos(empTasks, afterTime) {
+  const next = empTasks
+    .filter(t => t.start >= afterTime)
+    .sort((a, b) => a.start - b.start);
+  return next.length > 0 ? (next[0].entryPos ?? next[0].pos) : null;
+}
+
+function posDist(posA, posB, resolver) {
+  const meters = resolver ? resolver.metersBetween(posA, posB) : null;
+  return meters != null ? meters : getPosDistance(posA, posB);
+}
+
+// Per the corporate spec: inserting a task between two others already on a
+// shift changes the travel cost of BOTH the new task and whichever task
+// follows it — scoring by "distance from the previous task" alone (as this
+// used to) only sees half of that. This uses the classic cheapest-insertion
+// cost instead: dist(before, task) + dist(task, after) - dist(before, after)
+// — the actual marginal distance this task adds to the employee's day, given
+// where they already are before and after it, not just a one-sided look-back.
 function scoreEmployee(staff, assignedTasks, task, resolver) {
   const empTasks = assignedTasks[staff.name] || [];
   const lastExitPos = getLastTaskExitPos(empTasks, task.start);
+  const nextEntryPos = getNextTaskEntryPos(empTasks, task.end);
   const entryPos = task.entryPos ?? task.pos;
+  const exitPos = task.exitPos ?? task.pos;
   const hasSameFlightDiffTask = empTasks.some(t =>
     t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name
   );
   let dist;
   if (hasSameFlightDiffTask) {
     dist = 0;
+  } else if (lastExitPos && nextEntryPos) {
+    const distBefore = posDist(lastExitPos, entryPos, resolver);
+    const distAfter = posDist(exitPos, nextEntryPos, resolver);
+    const distDirect = posDist(lastExitPos, nextEntryPos, resolver);
+    dist = Math.max(0, distBefore + distAfter - distDirect);
   } else if (lastExitPos) {
-    const meters = resolver ? resolver.metersBetween(lastExitPos, entryPos) : null;
-    dist = meters != null ? meters : getPosDistance(lastExitPos, entryPos);
+    dist = posDist(lastExitPos, entryPos, resolver);
+  } else if (nextEntryPos) {
+    dist = posDist(exitPos, nextEntryPos, resolver);
   } else {
     dist = 10;
   }
