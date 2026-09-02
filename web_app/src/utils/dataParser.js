@@ -278,10 +278,15 @@ function displayName(resource) {
   return resource.additional_name || resource.name || resource.internal_id || null;
 }
 
+// Every join key below is run through String() on both the map and the
+// lookup side. The JSON export gives tb_shifts._id as a number, while a CSV
+// export of the same collection flattens it to a string — without this, a
+// shift-qualification join silently returns nothing the moment one side of
+// the join comes from CSV and the other from JSON.
 function buildResourceMap(resources) {
   const map = new Map();
   for (const r of resources || []) {
-    map.set(r.internal_id, r);
+    map.set(String(r.internal_id), r);
   }
   return map;
 }
@@ -290,8 +295,8 @@ function buildQualDict(resQual) {
   const byId = new Map();
   const byInternalId = new Map();
   for (const q of resQual || []) {
-    byId.set(q._id, q);
-    byInternalId.set(q.internal_id, q);
+    byId.set(String(q._id), q);
+    byInternalId.set(String(q.internal_id), q);
   }
   return { byId, byInternalId };
 }
@@ -302,15 +307,17 @@ function buildQualDict(resQual) {
 // dictionary doesn't contain it, rather than silently dropping the qualification.
 function resolveQualCode(ref, qualDict) {
   if (!ref) return null;
-  const rec = qualDict.byId.get(ref) || qualDict.byInternalId.get(ref);
+  const key = String(ref);
+  const rec = qualDict.byId.get(key) || qualDict.byInternalId.get(key);
   return rec ? rec.name : ref;
 }
 
 function buildResourceQualMap(resourceQualifications, qualDict) {
   const map = new Map();
   for (const rel of resourceQualifications || []) {
-    if (!map.has(rel.resource_ref)) map.set(rel.resource_ref, new Set());
-    map.get(rel.resource_ref).add(resolveQualCode(rel.qualification_ref, qualDict));
+    const key = String(rel.resource_ref);
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(resolveQualCode(rel.qualification_ref, qualDict));
   }
   return map;
 }
@@ -318,8 +325,9 @@ function buildResourceQualMap(resourceQualifications, qualDict) {
 function buildShiftQualMap(shiftQualifications, qualDict) {
   const map = new Map();
   for (const rel of shiftQualifications || []) {
-    if (!map.has(rel.shift_ref)) map.set(rel.shift_ref, new Set());
-    map.get(rel.shift_ref).add(resolveQualCode(rel.qualification_ref, qualDict));
+    const key = String(rel.shift_ref);
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(resolveQualCode(rel.qualification_ref, qualDict));
   }
   return map;
 }
@@ -345,7 +353,7 @@ function parseOrders(orders, resourceMap) {
       colorCounter++;
     }
 
-    const resource = o.res_assigned_to_ref ? resourceMap.get(o.res_assigned_to_ref) : null;
+    const resource = o.res_assigned_to_ref ? resourceMap.get(String(o.res_assigned_to_ref)) : null;
     const employee = displayName(resource) || (o.res_assigned_to_ref ? o.res_assigned_to_ref : 'Не назначено');
     const isLocked = Boolean(o.res_assigned_to_ref);
 
@@ -379,7 +387,7 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
   const staffDB = {};
 
   for (const s of shifts || []) {
-    const resource = resourceMap.get(s.resource_ref);
+    const resource = resourceMap.get(String(s.resource_ref));
     // Only staff whose home department is SPO belong in this optimizer's pool.
     if (!resource || resource.default_department_ref !== 'SPO') continue;
 
@@ -389,8 +397,8 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
 
     // Union of personal quals and quals recorded for this specific shift instance.
     const qualSet = new Set([
-      ...(resourceQualMap.get(s.resource_ref) || []),
-      ...(shiftQualMap.get(s._id) || []),
+      ...(resourceQualMap.get(String(s.resource_ref)) || []),
+      ...(shiftQualMap.get(String(s._id)) || []),
     ]);
     const quals = [...qualSet];
 
@@ -441,4 +449,50 @@ export function parseJsonExport({
   for (const t of tasks) colorMap[t.name] = t.color;
 
   return { tasks, staffDB, colorMap };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSV export of the same 6 collections (tb_sub_orders / tb_shifts /
+// tb_resources / tb_res_qual / tb_relation_resource_qualification /
+// tb_relation_shift_qualification) — the corporate system flattens each
+// Mongo collection to a flat CSV with the exact same column names as its
+// JSON export (confirmed against a real tb_sub_orders CSV export). Once
+// parsed into row objects the shape matches what parseJsonExport already
+// expects, with one flattening quirk to undo: req_qual_vector is a JSON
+// array in the source data, but CSV can't hold an array in one cell, so it
+// arrives as a single scalar column (comma/semicolon-joined if the export
+// ever carries more than one qualification for a task).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function csvTextToRows(text) {
+  if (!text || !text.trim()) return [];
+  const result = Papa.parse(text.trim(), { header: true, skipEmptyLines: true });
+  return result.data;
+}
+
+function coerceOrderRowsFromCsv(rows) {
+  return rows.map(r => ({
+    ...r,
+    req_qual_vector: r.req_qual_vector
+      ? String(r.req_qual_vector).split(/[,;]/).map(s => s.trim()).filter(Boolean)
+      : [],
+  }));
+}
+
+export function parseCsvCollections({
+  ordersCsv,
+  shiftsCsv,
+  resourcesCsv,
+  resQualCsv,
+  resourceQualificationsCsv,
+  shiftQualificationsCsv,
+}) {
+  return parseJsonExport({
+    orders: coerceOrderRowsFromCsv(csvTextToRows(ordersCsv)),
+    shifts: csvTextToRows(shiftsCsv),
+    resources: csvTextToRows(resourcesCsv),
+    resQual: csvTextToRows(resQualCsv),
+    resourceQualifications: csvTextToRows(resourceQualificationsCsv),
+    shiftQualifications: csvTextToRows(shiftQualificationsCsv),
+  });
 }
