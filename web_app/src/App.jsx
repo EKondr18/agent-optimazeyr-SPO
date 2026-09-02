@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ConfigProvider, Layout, Button, Select, Switch, Input,
   Checkbox, Space, Drawer, Collapse, Typography, Alert,
-  Spin, Empty, theme as antdTheme, Badge, Divider, message
+  Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal,
 } from 'antd';
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
@@ -13,7 +13,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
-import { runOptimizer, reassignDelayedConflicts } from './optimizer';
+import { runOptimizer, reassignDelayedConflicts, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -25,6 +25,10 @@ const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 const { Text } = Typography;
 
 const GANTT_WINDOW_DAYS = 3;
+
+function fmtTime(d) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 function shiftYMD(dateStr, days) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -422,6 +426,8 @@ export default function App() {
   const [csvFiles, setCsvFiles] = useState({});
   const [locationsFile, setLocationsFile] = useState(null);
   const [travelGraphFile, setTravelGraphFile] = useState(null);
+  const [conflictInfo, setConflictInfo] = useState(null);
+  const [draggingTask, setDraggingTask] = useState(null);
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
@@ -634,7 +640,7 @@ export default function App() {
   }
 
   function handleRunOptimizer() {
-    const updated = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver);
+    const updated = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates);
     setTasksDB(updated);
     setOptimizerRan(true);
   }
@@ -661,7 +667,7 @@ export default function App() {
       };
     });
 
-    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds, distanceResolver);
+    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds, distanceResolver, windowDates);
     updated = resolved;
     for (const c of changes) {
       if (c.backlog) {
@@ -671,13 +677,49 @@ export default function App() {
       }
     }
 
-    if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate, distanceResolver);
+    if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates);
     setTasksDB(updated);
   }
 
   function handleAssign(taskId, employeeName, lock) {
     setTasksDB(prev =>
       prev.map(t => t.id === taskId ? { ...t, employee: employeeName, isLocked: lock } : t)
+    );
+  }
+
+  // Shared "try to assign, warn on conflict" entry point for every manual
+  // assignment path (backlog select+button, Gantt drag-and-drop) — one copy
+  // of the conflict check instead of each path keeping its own, which has
+  // already caused a real double-booking bug once when they drifted apart.
+  function attemptAssign(task, employeeName, staffPool) {
+    const conflicts = findConflicts(employeeName, task, tasksDB, distanceResolver);
+    if (conflicts.length === 0) {
+      handleAssign(task.id, employeeName, true);
+      return;
+    }
+    const alternatives = staffPool.filter(s =>
+      s.name !== employeeName &&
+      hasAllQuals(s.quals, task) &&
+      s.shiftStart <= task.start &&
+      task.end <= s.shiftEnd &&
+      findConflicts(s.name, task, tasksDB, distanceResolver).length === 0
+    );
+    setConflictInfo({ task, sel: employeeName, conflicts, alternatives });
+  }
+
+  // Drop target for dragging a backlog task onto an employee's row in the
+  // main Gantt chart — resolves the dragged task id back to the task object
+  // and routes through the same conflict-checking path as manual assignment.
+  function handleDropAssign(taskId, employeeName) {
+    const task = tasksDB.find(t => t.id === taskId);
+    if (!task) return;
+    attemptAssign(task, employeeName, ganttStaff);
+  }
+
+  // Inline time edit from clicking a bar on the main Gantt chart.
+  function handleEditTaskTime(taskId, newStart, newEnd) {
+    setTasksDB(prev =>
+      prev.map(t => t.id === taskId ? { ...t, start: newStart, end: newEnd } : t)
     );
   }
 
@@ -730,6 +772,9 @@ export default function App() {
             filterTypes={filterTypes}
             filterFlight={filterFlight}
             isDark={isDark}
+            draggingTask={draggingTask}
+            onDropAssign={handleDropAssign}
+            onEditTaskTime={handleEditTaskTime}
           />
         </div>
       ),
@@ -754,6 +799,8 @@ export default function App() {
           onAssign={handleAssign}
           isDark={isDark}
           distanceResolver={distanceResolver}
+          onAssignAttempt={attemptAssign}
+          onDragTaskChange={setDraggingTask}
         />
       ),
     },
@@ -944,6 +991,73 @@ export default function App() {
         >
           <SidebarContent {...sidebarProps} onClose={() => setDrawerOpen(false)} />
         </Drawer>
+
+        {/* Conflict warning modal — shared by the backlog's select+button
+            assignment and the Gantt chart's drag-and-drop assignment. */}
+        <Modal
+          title={<span style={{ color: '#ff4d4f' }}>⚠️ Конфликт расписания</span>}
+          open={!!conflictInfo}
+          onCancel={() => setConflictInfo(null)}
+          footer={[
+            <Button key="cancel" onClick={() => setConflictInfo(null)}>
+              Отмена
+            </Button>,
+            <Button
+              key="force"
+              type="primary"
+              danger
+              onClick={() => {
+                handleAssign(conflictInfo.task.id, conflictInfo.sel, true);
+                setConflictInfo(null);
+              }}
+            >
+              Назначить принудительно
+            </Button>,
+          ]}
+        >
+          <Alert
+            type="error"
+            showIcon
+            message={`Сотрудник ${conflictInfo?.sel} занят в это время`}
+            description={
+              <ul style={{ marginTop: 4, paddingLeft: 16, marginBottom: 0 }}>
+                {conflictInfo?.conflicts.map(c => (
+                  <li key={c.id}>
+                    <b>{c.name}</b> · {fmtTime(c.start)}–{fmtTime(c.end)} · рейс {c.flight}
+                  </li>
+                ))}
+              </ul>
+            }
+            style={{ marginBottom: 16 }}
+          />
+
+          {conflictInfo?.alternatives.length > 0 ? (
+            <div>
+              <Text strong>Свободные сотрудники с нужной квалификацией:</Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                {conflictInfo.alternatives.map(alt => (
+                  <Button
+                    key={alt.name}
+                    size="small"
+                    onClick={() => {
+                      handleAssign(conflictInfo.task.id, alt.name, true);
+                      setConflictInfo(null);
+                    }}
+                  >
+                    {alt.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <Alert
+              type="warning"
+              showIcon
+              message="Нет свободных альтернатив"
+              description="Все квалифицированные сотрудники заняты в это время. Можно назначить принудительно."
+            />
+          )}
+        </Modal>
       </Layout>
     </ConfigProvider>
   );
