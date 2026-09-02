@@ -1017,6 +1017,7 @@ export default function App() {
                   tasks={tasksDB}
                   staffList={currentStaff}
                   selectedDate={selectedDate}
+                  distanceResolver={distanceResolver}
                 />
                 <Collapse
                   items={collapseItems}
