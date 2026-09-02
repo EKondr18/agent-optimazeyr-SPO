@@ -775,6 +775,7 @@ export default function App() {
             draggingTask={draggingTask}
             onDropAssign={handleDropAssign}
             onEditTaskTime={handleEditTaskTime}
+            onUnassignTask={taskId => handleAssign(taskId, 'Не назначено', false)}
           />
         </div>
       ),

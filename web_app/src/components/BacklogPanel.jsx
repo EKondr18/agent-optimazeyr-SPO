@@ -78,6 +78,12 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
   const ROW_PX     = 26;
   const chartH     = Math.max(200, rowCount * ROW_PX + 110);
   const containerH = Math.min(chartH, 380);
+  // Same fix as the main Gantt chart: the scrollable row container below
+  // grows a native scrollbar that this never-scrolling ruler doesn't,
+  // which shrinks the content plot's width and desyncs its ticks from the
+  // ruler's unless the ruler reserves the same width itself.
+  const SCROLLBAR_W = 16;
+  const rulerExtraMargin = chartH > containerH ? SCROLLBAR_W : 0;
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
@@ -96,7 +102,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
           data={[]}
           layout={{
             height: 44,
-            margin: { l: ML, r: 16, t: 6, b: 28 },
+            margin: { l: ML, r: 16 + rulerExtraMargin, t: 6, b: 28 },
             xaxis: ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
             yaxis: { visible: false, fixedrange: true },
             paper_bgcolor: 'rgba(0,0,0,0)',
