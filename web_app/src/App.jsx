@@ -7,7 +7,8 @@ import {
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
   MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
-  UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
+  UnorderedListOutlined, ClockCircleOutlined, RiseOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -19,6 +20,7 @@ import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
 import TaskDelayPanel from './components/TaskDelayPanel';
 import HourlyLoadChart from './components/HourlyLoadChart';
+import StaffingGapPanel from './components/StaffingGapPanel';
 
 const { Sider, Content, Header } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = antdTheme;
@@ -413,6 +415,7 @@ export default function App() {
   const [tasksDB, setTasksDB] = useState([]);
   const [staffDB, setStaffDB] = useState({});
   const [colorMap, setColorMap] = useState({});
+  const [fullRoster, setFullRoster] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
   const [optimizerRan, setOptimizerRan] = useState(false);
   const [filterTypes, setFilterTypes] = useState([]);
@@ -492,13 +495,21 @@ export default function App() {
     [tasksDB]
   );
   const backlogCount = ganttTasks.filter(t => t.employee === 'Не назначено').length;
+  // Anyone with a shift anywhere in the window counts as "already
+  // scheduled" for staffing-gap purposes — a call-in candidate must be off
+  // in the whole 3-day window, not just the exact selected date.
+  const scheduledNames = useMemo(
+    () => new Set(ganttStaff.map(s => s.name)),
+    [ganttStaff]
+  );
 
-  function applyParsedData({ tasks, staffDB: db, colorMap: cm }) {
+  function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
     const types = [...new Set(tasks.map(t => t.name))];
     setTasksDB(tasks);
     setStaffDB(db);
     setColorMap(cm);
+    setFullRoster(roster || []);
     setSelectedDate(dates[0]);
     setFilterTypes(types);
     setFilterFlight('');
@@ -835,6 +846,27 @@ export default function App() {
           selectedDate={selectedDate}
           selectedTaskTypes={filterTypes}
           colorMap={colorMap}
+          isDark={isDark}
+        />
+      ),
+    },
+    {
+      key: 'staffing-gap',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <TeamOutlined style={{ marginRight: 8 }} />
+          Нехватка персонала
+          {backlogCount > 0 && <Badge count={backlogCount} style={{ marginLeft: 8 }} />}
+        </span>
+      ),
+      children: (
+        <StaffingGapPanel
+          tasks={tasksDB}
+          windowDates={windowDates}
+          windowStart={windowDates[0]}
+          windowDays={GANTT_WINDOW_DAYS}
+          fullRoster={fullRoster}
+          scheduledNames={scheduledNames}
           isDark={isDark}
         />
       ),
