@@ -28,7 +28,7 @@ const ROW_PX = 30;
 export default function GanttChart({
   tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate,
   filterTypes, filterFlight, isDark,
-  draggingTask, onDropAssign, onEditTaskTime,
+  draggingTask, onDropAssign, onEditTaskTime, onUnassignTask,
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [editingTask, setEditingTask] = useState(null);
@@ -65,6 +65,17 @@ export default function GanttChart({
       empTypesMap[t.employee].add(t.reqType);
     }
 
+    // The row label/expand-arrow shows what an employee is currently doing
+    // (their assigned tasks' types) when they have any — but for someone
+    // with zero tasks assigned yet, that set is empty, which made their row
+    // look "unqualified" even though they hold real quals. Fall back to
+    // their actual held qualifications (from the shift data) in that case.
+    const empRealQuals = {};
+    for (const s of staffShifts) {
+      if (!empRealQuals[s.name]) empRealQuals[s.name] = new Set();
+      for (const q of s.quals || []) empRealQuals[s.name].add(q);
+    }
+
     // Every employee with a shift in the window gets a row even before any
     // task is assigned to them — so the chart is ready to drag tasks onto
     // as soon as data loads, not just after the optimizer has run.
@@ -87,7 +98,10 @@ export default function GanttChart({
     const empRowRange = {}; // employee -> [startIdx, endIdx] (top-down, inclusive)
 
     for (const emp of employees) {
-      const types = [...(empTypesMap[emp] || [])].sort();
+      const assignedTypes = empTypesMap[emp];
+      const types = assignedTypes && assignedTypes.size > 0
+        ? [...assignedTypes].sort()
+        : [...(empRealQuals[emp] || [])].sort();
       const splittable = types.length > 1;
       const isExpanded = splittable && expanded.has(emp);
       const startIdx = yRowsTopDown.length;
@@ -271,6 +285,13 @@ export default function GanttChart({
   // already assigned), the chart can run to hundreds of rows — a taller
   // viewport means far less scrolling to reach a given time/employee.
   const containerH = Math.min(chartH, 780);
+  // When the row list overflows, its container grows a native scrollbar
+  // that the (never-scrolling) ruler above it doesn't — silently shrinking
+  // the content plot's width relative to the ruler's and desyncing their
+  // ticks. Reserve the same width on the ruler's right margin so both stay
+  // the same width whether or not the scrollbar is actually showing.
+  const SCROLLBAR_W = 16;
+  const rulerExtraMargin = chartH > containerH ? SCROLLBAR_W : 0;
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
@@ -292,7 +313,7 @@ export default function GanttChart({
           data={[]}
           layout={{
             height: 52,
-            margin: { l: ML, r: 16, t: 6, b: 36, autoexpand: false },
+            margin: { l: ML, r: 16 + rulerExtraMargin, t: 6, b: 36, autoexpand: false },
             xaxis: ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
             yaxis: { visible: false, fixedrange: true },
             shapes: dayBoundaryShapes,
@@ -411,12 +432,22 @@ export default function GanttChart({
       </div>
 
       <Modal
-        title="Изменить время задачи"
+        title="Задача"
         open={!!editingTask}
         onCancel={() => setEditingTask(null)}
-        onOk={saveTimeEdit}
-        okText="Сохранить"
-        cancelText="Отмена"
+        footer={[
+          <Button
+            key="unassign"
+            danger
+            disabled={editingTask?.employee === 'Не назначено'}
+            onClick={() => { onUnassignTask?.(editingTask.id); setEditingTask(null); }}
+            style={{ float: 'left' }}
+          >
+            Вернуть в бэклог
+          </Button>,
+          <Button key="cancel" onClick={() => setEditingTask(null)}>Отмена</Button>,
+          <Button key="save" type="primary" onClick={saveTimeEdit}>Сохранить время</Button>,
+        ]}
       >
         {editingTask && (
           <div>
