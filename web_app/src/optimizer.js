@@ -27,9 +27,18 @@ function hasInsufficientGap(a, b) {
 }
 
 function conflictsWith(a, b) {
-  // Same flight + different task name = complementary roles on same plane → overlap allowed
-  // Same flight + same task name = 2 identical tasks → need 2 different people, NO exemption
-  if (a.flight === b.flight && a.flight !== 'Рейс не указ.' && a.name !== b.name) return false;
+  // Same flight + same stand + different task name = complementary roles on
+  // the same physical aircraft turn → overlap allowed for one employee.
+  // Same flight + same task name = 2 identical tasks → need 2 different
+  // people, NO exemption. The same-stand check matters: two unrelated
+  // orders can share a flight_ref (e.g. arrival/departure legs of different
+  // turns linking to the same flight entity) while sitting at completely
+  // different stands — that's two jobs a person can't physically do at
+  // once, not a complementary pair, so it must still count as a conflict.
+  if (a.flight === b.flight && a.flight !== 'Рейс не указ.' && a.name !== b.name &&
+      getPosDistance(a.pos, b.pos) === 0) {
+    return false;
+  }
   return tasksOverlap(a, b) || hasInsufficientGap(a, b);
 }
 
