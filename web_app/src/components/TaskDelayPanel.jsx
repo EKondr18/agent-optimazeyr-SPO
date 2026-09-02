@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Table, Input, InputNumber, Button, Space } from 'antd';
+import { Table, Input, InputNumber, Button, Space, Typography } from 'antd';
+
+const { Text } = Typography;
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -8,6 +10,8 @@ function fmt(d) {
 export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
   const [delays, setDelays] = useState({});
   const [filter, setFilter] = useState('');
+  const [minDelay, setMinDelay] = useState(0);
+  const [maxDelay, setMaxDelay] = useState(300);
 
   const dayTasks = useMemo(
     () => tasks.filter(t => t.date === selectedDate),
@@ -53,11 +57,11 @@ export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
       width: 130,
       render: (_, t) => (
         <InputNumber
-          min={0}
-          max={300}
+          min={minDelay}
+          max={maxDelay}
           step={5}
           value={delays[t.id] ?? 0}
-          onChange={val => setDelays(prev => ({ ...prev, [t.id]: Math.max(0, Math.min(300, Number(val) || 0)) }))}
+          onChange={val => setDelays(prev => ({ ...prev, [t.id]: Math.max(minDelay, Math.min(maxDelay, Number(val) || 0)) }))}
           size="small"
           style={{ width: 90 }}
         />
@@ -67,7 +71,7 @@ export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }} wrap>
+      <Space style={{ marginBottom: 12 }} wrap>
         <Input.Search
           placeholder="Фильтр по рейсу или задаче…"
           value={filter}
@@ -81,6 +85,27 @@ export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
         <Button onClick={() => setDelays({})}>
           ↺ Сбросить всё
         </Button>
+      </Space>
+
+      <Space style={{ marginBottom: 16 }} wrap align="center">
+        <Text style={{ fontSize: 12 }}>Диапазон сдвига (мин):</Text>
+        <InputNumber
+          size="small"
+          min={0}
+          max={maxDelay}
+          value={minDelay}
+          onChange={val => setMinDelay(Math.min(Number(val) || 0, maxDelay))}
+          style={{ width: 80 }}
+          addonBefore="от"
+        />
+        <InputNumber
+          size="small"
+          min={minDelay}
+          value={maxDelay}
+          onChange={val => setMaxDelay(Math.max(Number(val) || 0, minDelay))}
+          style={{ width: 80 }}
+          addonBefore="до"
+        />
       </Space>
 
       <Table
