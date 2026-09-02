@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space } from 'antd';
 import Plot from 'react-plotly.js';
 import { hasAllQuals } from '../optimizer';
-import { ganttXAxisConfig, GANTT_LABEL_WIDTH } from '../utils/ganttAxis';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
 
 const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
 
@@ -20,11 +20,12 @@ function fmt(d) {
 }
 
 // Replicates GanttChart visual style for unassigned tasks
-function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark }) {
+function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, visibleRange, onVisibleRangeChange }) {
   const dateObj = new Date(windowStart + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
+  const range = visibleRange || [dateObj.getTime(), nextDay.getTime()];
 
-  const { traces, yOrderBottomUp, rowCount } = useMemo(() => {
+  const { traces, yOrderBottomUp, rowLabels, rowCount } = useMemo(() => {
     const flightSet = [...new Set(unassigned.map(t => t.flight))].sort();
 
     const byName = {};
@@ -71,12 +72,15 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
     return {
       traces,
       yOrderBottomUp: [...flightSet].reverse(),
+      rowLabels: flightSet, // top-down order, same as flightSet
       rowCount: flightSet.length,
     };
   }, [unassigned, colorMap]);
 
   const ROW_PX     = 26;
-  const chartH     = Math.max(200, rowCount * ROW_PX + 110);
+  const MARGIN_T   = 4;
+  const MARGIN_B   = 8;
+  const chartH     = Math.max(200, rowCount * ROW_PX + MARGIN_T + MARGIN_B);
   const containerH = Math.min(chartH, 380);
   // Same fix as the main Gantt chart: the scrollable row container below
   // grows a native scrollbar that this never-scrolling ruler doesn't,
@@ -89,9 +93,15 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
   const plotBg    = isDark ? '#1a1a2e' : '#FFF7ED';
   const borderClr = isDark ? '#2d2d2d' : '#f0f0f0';
+  const labelBg   = isDark ? '#1a1a2e' : '#FFF7ED';
 
   // Shared with the main Gantt chart so the two time rulers line up.
   const ML = GANTT_LABEL_WIDTH;
+
+  function handleRelayout(ev) {
+    const r = parseRelayoutXRange(ev);
+    if (r !== undefined) onVisibleRangeChange?.(r);
+  }
 
   return (
     <div style={{ border: `1px solid ${borderClr}`, borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
@@ -103,7 +113,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
           layout={{
             height: 44,
             margin: { l: ML, r: 16 + rulerExtraMargin, t: 6, b: 28 },
-            xaxis: ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
+            xaxis: ganttXAxisConfig(range, fontColor, gridColor, true),
             yaxis: { visible: false, fixedrange: true },
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
@@ -115,43 +125,82 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
         />
       </div>
 
-      {/* Scrollable bars */}
-      <div style={{ height: containerH, overflowY: 'auto', overflowX: 'hidden' }}>
-        <Plot
-          data={traces}
-          layout={{
-            height: chartH,
-            barmode: 'overlay',
-            bargap: 0.15,
-            showlegend: false,
-            margin: { l: ML, r: 16, t: 4, b: 8 },
-            xaxis: {
-              ...ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, false, windowDays),
-              showgrid: true,
-              fixedrange: false,
-            },
-            yaxis: {
-              categoryarray: yOrderBottomUp,
-              categoryorder: 'array',
-              tickfont: { size: 11, color: fontColor },
-              automargin: false,
-              gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
-            },
-            hoverlabel: { font: { size: 12 }, namelength: -1 },
-            paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: plotBg,
-            font: { color: fontColor },
+      {/* Scrollable rows: custom label column (proper ellipsis + hover-title
+          instead of Plotly's own y-axis labels getting cropped mid-character
+          with no way to see the full flight ref) + bars */}
+      <div style={{ height: containerH, overflowY: 'auto', overflowX: 'hidden', display: 'flex' }}>
+        <div
+          style={{
+            width: ML,
+            flexShrink: 0,
+            background: labelBg,
+            paddingTop: MARGIN_T,
+            paddingBottom: MARGIN_B,
+            boxSizing: 'border-box',
           }}
-          config={{
-            responsive: true,
-            displayModeBar: true,
-            modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
-            scrollZoom: false,
-            toImageButtonOptions: { format: 'png', scale: 2 },
-          }}
-          style={{ width: '100%' }}
-          useResizeHandler
-        />
+        >
+          {rowLabels.map(label => (
+            <div
+              key={label}
+              title={label}
+              style={{
+                height: ROW_PX,
+                display: 'flex',
+                alignItems: 'center',
+                paddingLeft: 12,
+                paddingRight: 8,
+                fontSize: 12,
+                color: fontColor,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                userSelect: 'none',
+              }}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Plot
+            data={traces}
+            layout={{
+              height: chartH,
+              barmode: 'overlay',
+              bargap: 0.15,
+              showlegend: false,
+              margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B },
+              xaxis: {
+                ...ganttXAxisConfig(range, fontColor, gridColor, false),
+                showgrid: true,
+                fixedrange: false,
+              },
+              yaxis: {
+                categoryarray: yOrderBottomUp,
+                categoryorder: 'array',
+                showticklabels: false,
+                automargin: false,
+                gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
+              },
+              dragmode: 'zoom',
+              hoverlabel: { font: { size: 12 }, namelength: -1 },
+              paper_bgcolor: 'rgba(0,0,0,0)',
+              plot_bgcolor: plotBg,
+              font: { color: fontColor },
+            }}
+            config={{
+              responsive: true,
+              displayModeBar: true,
+              modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+              scrollZoom: false,
+              toImageButtonOptions: { format: 'png', scale: 2 },
+            }}
+            onRelayout={handleRelayout}
+            style={{ width: '100%' }}
+            useResizeHandler
+          />
+        </div>
       </div>
     </div>
   );
@@ -159,7 +208,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
 
 export default function BacklogPanel({
   tasks, staffList, windowDates, windowStart, windowDays, colorMap, onAssign, isDark,
-  onAssignAttempt, onDragTaskChange,
+  onAssignAttempt, onDragTaskChange, visibleRange, onVisibleRangeChange,
 }) {
   const [selections, setSelections] = useState({});
 
@@ -265,6 +314,8 @@ export default function BacklogPanel({
         windowStart={windowStart}
         windowDays={windowDays}
         isDark={isDark}
+        visibleRange={visibleRange}
+        onVisibleRangeChange={onVisibleRangeChange}
       />
 
       <Table
