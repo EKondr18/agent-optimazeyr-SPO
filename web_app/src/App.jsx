@@ -502,6 +502,10 @@ export default function App() {
     () => new Set(ganttStaff.map(s => s.name)),
     [ganttStaff]
   );
+  const backlogTasksAll = useMemo(
+    () => tasksDB.filter(t => t.employee === 'Не назначено'),
+    [tasksDB]
+  );
 
   function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
@@ -841,13 +845,23 @@ export default function App() {
         </span>
       ),
       children: (
-        <HourlyLoadChart
-          tasks={tasksDB}
-          selectedDate={selectedDate}
-          selectedTaskTypes={filterTypes}
-          colorMap={colorMap}
-          isDark={isDark}
-        />
+        <div>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи</Text>
+          <HourlyLoadChart
+            tasks={tasksDB}
+            selectedDate={selectedDate}
+            selectedTaskTypes={filterTypes}
+            isDark={isDark}
+          />
+          <Divider style={{ margin: '20px 0' }} />
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
+          <HourlyLoadChart
+            tasks={backlogTasksAll}
+            selectedDate={selectedDate}
+            selectedTaskTypes={filterTypes}
+            isDark={isDark}
+          />
+        </div>
       ),
     },
     {
