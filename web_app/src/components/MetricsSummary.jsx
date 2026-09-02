@@ -22,12 +22,22 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     const avgLoad = loads.length > 0 ? loads.reduce((s, v) => s + v, 0) / loads.length : 0;
     const maxLoad = loads.length > 0 ? Math.max(...loads) : 0;
 
+    // For each employee whose day runs past shift end, how late they
+    // actually leave — the latest task's end time vs shiftEnd, not a sum
+    // across every late task (what matters operationally is when they
+    // clock out, not how many individual tasks happened to run late).
     let overtimeCount = 0;
+    let overtimeMinutesSum = 0;
     for (const [name, list] of Object.entries(byEmployee)) {
       const shift = shiftByName.get(name);
       if (!shift) continue;
-      if (list.some(t => t.end > shift.shiftEnd)) overtimeCount++;
+      const latestEnd = new Date(Math.max(...list.map(t => t.end.getTime())));
+      if (latestEnd > shift.shiftEnd) {
+        overtimeCount++;
+        overtimeMinutesSum += (latestEnd - shift.shiftEnd) / 60000;
+      }
     }
+    const avgOvertimeMinutes = overtimeCount > 0 ? overtimeMinutesSum / overtimeCount : null;
 
     // Average distance an employee has to cover between two consecutive
     // (non-overlapping) tasks of their own — exit point of the earlier task
@@ -52,7 +62,7 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     }
     const avgGap = gapCount > 0 ? gapSum / gapCount : null;
 
-    return { avgLoad, maxLoad, overtimeCount, avgGap, hasRealDistance: !!distanceResolver };
+    return { avgLoad, maxLoad, overtimeCount, avgOvertimeMinutes, avgGap, hasRealDistance: !!distanceResolver };
   }, [assignedTasks, staffList, distanceResolver]);
 
   const tiles = [
@@ -99,6 +109,13 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
       value: quality.overtimeCount,
       prefix: '🕒',
       valueStyle: { color: quality.overtimeCount > 0 ? '#faad14' : '#52c41a' },
+    },
+    {
+      title: 'Ср. переработка, мин',
+      value: quality.avgOvertimeMinutes != null ? quality.avgOvertimeMinutes : '—',
+      precision: quality.avgOvertimeMinutes != null ? 0 : undefined,
+      prefix: '⏱️',
+      valueStyle: quality.avgOvertimeMinutes > 30 ? { color: '#ff4d4f' } : {},
     },
     {
       title: quality.hasRealDistance ? 'Ср. переход между задачами, м' : 'Ср. переход между задачами (усл. ед.)',
