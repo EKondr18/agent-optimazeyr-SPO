@@ -439,6 +439,20 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
   return staffDB;
 }
 
+// Every SPO resource with their own held qualifications (tb_relation_resource_
+// qualification), independent of whether they have a shift on any given
+// date — this is the pool a dispatcher could call in on top of who's
+// already scheduled. Separate from parseShifts' staffDB, which only lists
+// people who already have a shift.
+function buildFullRoster(resources, resourceQualMap) {
+  return (resources || [])
+    .filter(r => r.default_department_ref === 'SPO')
+    .map(r => ({
+      name: displayName(r) || r.internal_id,
+      quals: [...(resourceQualMap.get(String(r.internal_id)) || [])],
+    }));
+}
+
 export function parseJsonExport({
   orders,
   shifts,
@@ -454,11 +468,12 @@ export function parseJsonExport({
 
   const tasks = parseOrders(orders);
   const staffDB = parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap);
+  const fullRoster = buildFullRoster(resources, resourceQualMap);
 
   const colorMap = {};
   for (const t of tasks) colorMap[t.name] = t.color;
 
-  return { tasks, staffDB, colorMap };
+  return { tasks, staffDB, colorMap, fullRoster };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
