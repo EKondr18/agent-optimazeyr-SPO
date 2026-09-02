@@ -9,7 +9,21 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, colorMap, isDark }) {
+// Categorical palette for qualification codes — independent of colorMap
+// (which is keyed by task name), since this chart groups by required
+// qualification instead.
+const QUAL_COLOR_PALETTE = [
+  '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD',
+  '#8C564B', '#E377C2', '#7F7F7F', '#BCBD22', '#17BECF',
+  '#AEC7E8', '#FFBB78', '#98DF8A', '#FF9896', '#C5B0D5',
+];
+function qualColor(qual) {
+  let hash = 0;
+  for (let i = 0; i < qual.length; i++) hash = (hash * 31 + qual.charCodeAt(i)) | 0;
+  return QUAL_COLOR_PALETTE[Math.abs(hash) % QUAL_COLOR_PALETTE.length];
+}
+
+export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark }) {
   const { traces } = useMemo(() => {
     const xLabels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
     const dateBase = new Date(selectedDate + 'T00:00:00');
@@ -18,59 +32,54 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
       t => t.date === selectedDate && selectedTaskTypes.includes(t.name)
     );
 
-    const byType = {};
-    for (const typeName of selectedTaskTypes) {
-      byType[typeName] = Array(24).fill(0);
-    }
+    // Grouped by required qualification (same convention as the rest of the
+    // app — GanttChart's sub-rows, StaffingGapPanel) rather than by task
+    // name: a handful of qualification codes instead of 50+ task-name
+    // variants keeps the legend and hover actually readable.
+    const byQual = {};
     for (let h = 0; h < 24; h++) {
       const slotStart = new Date(dateBase.getTime() + h * 3600000);
       const slotEnd = new Date(slotStart.getTime() + 3600000);
       for (const t of dayTasks) {
         if (Math.min(t.end, slotEnd) > Math.max(t.start, slotStart)) {
-          byType[t.name][h]++;
+          const qual = t.reqType || '(без квалификации)';
+          if (!byQual[qual]) byQual[qual] = Array(24).fill(0);
+          byQual[qual][h]++;
         }
       }
     }
 
-    // Unique flights per hour based on filtered tasks only
     const hourlyReq = Array(24).fill(0);
-    for (let h = 0; h < 24; h++) {
-      const slotStart = new Date(dateBase.getTime() + h * 3600000);
-      const slotEnd = new Date(slotStart.getTime() + 3600000);
-      const flights = new Set();
-      for (const t of dayTasks) {
-        if (Math.min(t.end, slotEnd) > Math.max(t.start, slotStart)) {
-          flights.add(t.flight);
-        }
-      }
-      hourlyReq[h] = flights.size;
+    for (const counts of Object.values(byQual)) {
+      for (let h = 0; h < 24; h++) hourlyReq[h] += counts[h];
     }
 
     // Sort descending by total count: largest total renders first (at back/bottom of stack)
-    const sortedTypes = [...selectedTaskTypes].sort((a, b) => {
-      const sumA = (byType[a] || []).reduce((s, v) => s + v, 0);
-      const sumB = (byType[b] || []).reduce((s, v) => s + v, 0);
+    const sortedQuals = Object.keys(byQual).sort((a, b) => {
+      const sumA = byQual[a].reduce((s, v) => s + v, 0);
+      const sumB = byQual[b].reduce((s, v) => s + v, 0);
       return sumB - sumA;
     });
 
     const fontColor = isDark ? '#d4d4d4' : '#444';
-    const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
-    const plotBg = isDark ? '#1a1a2e' : '#F8FAFC';
 
     // No stackgroup — each trace fills from zero independently.
     // Sorted largest→smallest so biggest area renders at back, smaller ones visible on top.
-    const areaTraces = sortedTypes.map(typeName => {
-      const color = colorMap[typeName] || '#888888';
+    const areaTraces = sortedQuals.map(qual => {
+      const color = qualColor(qual);
       return {
         type: 'scatter',
         mode: 'lines',
         fill: 'tozeroy',
-        name: typeName,
+        name: qual,
         x: xLabels,
-        y: byType[typeName],
+        // null (not 0) at zero-demand hours so hovermode:'x unified' omits
+        // this trace from the tooltip there, instead of listing every
+        // qualification with "0" at every hour it isn't actually needed.
+        y: byQual[qual].map(v => (v === 0 ? null : v)),
         line: { color, width: 1.5 },
-        fillcolor: hexToRgba(color, 0.62),
-        hovertemplate: `<b>${typeName}</b>: %{y}<extra></extra>`,
+        fillcolor: hexToRgba(color, 0.55),
+        hovertemplate: `<b>${qual}</b>: %{y}<extra></extra>`,
       };
     });
 
@@ -79,17 +88,17 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
       mode: 'lines+markers+text',
       name: 'Потребность в персонале (чел.)',
       x: xLabels,
-      y: hourlyReq,
+      y: hourlyReq.map(v => (v === 0 ? null : v)),
       text: hourlyReq.map(v => (v > 0 ? String(v) : '')),
       textposition: 'top center',
       textfont: { size: 10, color: fontColor },
       line: { color: isDark ? '#ffffff' : '#111111', width: 2.5, dash: 'dot' },
       marker: { color: isDark ? '#ffffff' : '#111111', size: 6 },
-      hovertemplate: '<b>Потребность (рейсы)</b>: %{y}<extra></extra>',
+      hovertemplate: '<b>Потребность (чел.)</b>: %{y}<extra></extra>',
     };
 
-    return { traces: [...areaTraces, reqTrace], plotBg, fontColor, gridColor };
-  }, [tasks, selectedDate, selectedTaskTypes, colorMap, isDark]);
+    return { traces: [...areaTraces, reqTrace] };
+  }, [tasks, selectedDate, selectedTaskTypes, isDark]);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
@@ -119,7 +128,7 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
           y: -0.35,
           yanchor: 'top',
           font: { size: 11, color: fontColor },
-          title: { text: 'Тип задачи', font: { color: fontColor } },
+          title: { text: 'Квалификация', font: { color: fontColor } },
         },
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: plotBg,
