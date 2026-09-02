@@ -68,6 +68,16 @@ function hasConflict(empTasks, newTask, resolver) {
   return empTasks.some(t => conflictsWith(t, newTask, resolver));
 }
 
+// Every conflicting task if `task` were assigned to `employeeName` (empty =
+// no conflict). Exported so every manual-assignment entry point (backlog
+// select+button, Gantt drag-and-drop) checks the exact same rule instead of
+// each keeping its own copy — a past duplicate of this logic drifted out of
+// sync with the optimizer's and caused a real double-booking bug.
+export function findConflicts(employeeName, task, tasks, resolver) {
+  const empTasks = tasks.filter(t => t.employee === employeeName && t.id !== task.id);
+  return empTasks.filter(et => conflictsWith(et, task, resolver));
+}
+
 function getLastTaskPos(empTasks, beforeTime) {
   const prior = empTasks
     .filter(t => t.end <= beforeTime)
@@ -100,6 +110,20 @@ function commit(result, assignedTasks, taskId, employeeName) {
   assignedTasks[employeeName].push(result[idx]);
 }
 
+// Staff pool merged across a window of dates (the planning window, e.g.
+// selectedDate ±1 day), de-duplicated by (name, shiftStart) since a shift
+// crossing midnight is bucketed under more than one date.
+function mergeStaffWindow(staffDB, dates) {
+  const map = new Map();
+  for (const d of dates) {
+    for (const s of staffDB[d] || []) {
+      const key = `${s.name}__${s.shiftStart.getTime()}`;
+      if (!map.has(key)) map.set(key, s);
+    }
+  }
+  return [...map.values()];
+}
+
 // A delay just shifted some tasks' times. If a delayed task is locked to an
 // employee and now overlaps another locked task of that same employee, the
 // dispatcher's manual pin can no longer be honoured as-is — relocate the
@@ -107,17 +131,18 @@ function commit(result, assignedTasks, taskId, employeeName) {
 // logic the optimizer uses for unassigned ("Свободно") tasks. Untouched
 // locked tasks (not delayed) are left alone, since their conflicts — if
 // any — were a deliberate dispatcher override (force-assign).
-export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds, resolver) {
+export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds, resolver, windowDates) {
   const result = tasks.map(t => ({ ...t }));
   if (!delayedTaskIds || delayedTaskIds.length === 0) return { tasks: result, changes: [] };
 
-  const staff = staffDB[selectedDate] || [];
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return { tasks: result, changes: [] };
 
   const assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
   for (const t of result) {
-    if (t.date === selectedDate && t.employee !== 'Не назначено') {
+    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
       assignedTasks[t.employee].push(t);
     }
@@ -127,7 +152,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
   const changes = [];
 
   for (const task of result) {
-    if (task.date !== selectedDate || !task.isLocked || !delayedSet.has(task.id)) continue;
+    if (!dates.includes(task.date) || !task.isLocked || !delayedSet.has(task.id)) continue;
     if (task.employee === 'Не назначено') continue;
 
     const currentEmp = task.employee;
@@ -184,14 +209,20 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
   return { tasks: result, changes };
 }
 
-export function runOptimizer(tasks, staffDB, selectedDate, resolver) {
+// windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
+// staff shifts from any date in this window are assignable together, since
+// shifts and tasks both routinely cross midnight. Defaults to just
+// selectedDate if no window is given.
+export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates) {
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+
   let result = tasks.map(t =>
-    t.date === selectedDate && !t.isLocked
+    dates.includes(t.date) && !t.isLocked
       ? { ...t, employee: 'Не назначено' }
       : { ...t }
   );
 
-  const staff = staffDB[selectedDate] || [];
+  const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return result;
 
   const assignedTasks = {};
@@ -199,13 +230,13 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver) {
 
   // Pre-load locked tasks into the assignment map
   for (const t of result) {
-    if (t.date === selectedDate && t.isLocked && t.employee !== 'Не назначено') {
+    if (dates.includes(t.date) && t.isLocked && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
       assignedTasks[t.employee].push(t);
     }
   }
 
-  const toAssign = result.filter(t => t.date === selectedDate && !t.isLocked);
+  const toAssign = result.filter(t => dates.includes(t.date) && !t.isLocked);
 
   // Sort by difficulty: tasks with fewer eligible employees go first
   // so rare/constrained tasks get first pick of available staff

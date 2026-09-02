@@ -1,35 +1,55 @@
 import Plot from 'react-plotly.js';
 import { useMemo, useState } from 'react';
+import { Modal, Button, Typography } from 'antd';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH } from '../utils/ganttAxis';
+import { hasAllQuals } from '../optimizer';
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
+// Local-time <input type="datetime-local"> value <-> Date, consistent with
+// how the rest of the app already reads/writes times via local getters
+// (fmt() above), so this doesn't introduce a second timezone convention.
+function toDatetimeLocalValue(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fromDatetimeLocalValue(s) {
+  const [datePart, timePart] = s.split('T');
+  const [y, m, day] = datePart.split('-').map(Number);
+  const [h, min] = timePart.split(':').map(Number);
+  return new Date(y, m - 1, day, h, min);
+}
+
 const SEP = '—';
 const ROW_PX = 30;
 
-// Shared x-axis config used in both the header ruler and the main chart
-function xAxisConfig(dateObj, nextDay, fontColor, gridColor, showLabels, windowDays) {
-  return {
-    type: 'date',
-    range: [dateObj.getTime(), nextDay.getTime()],
-    // With more than one day on screen, break the tick label onto a second
-    // line showing the date — Plotly only renders that second line where
-    // the coarser unit (the day) actually changes, so it reads as a day
-    // separator rather than clutter on every tick.
-    tickformat: windowDays > 1 ? '%H:%M\n%d.%m' : '%H:%M',
-    dtick: 3600000 * (windowDays > 1 ? 4 : 2),
-    gridcolor: gridColor,
-    tickfont: { color: fontColor, size: 13 },
-    showticklabels: showLabels,
-    showgrid: showLabels ? false : true,   // gridlines only in main chart
-    zeroline: false,
-    fixedrange: true,
-  };
-}
-
-export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate, filterTypes, filterFlight, isDark }) {
+export default function GanttChart({
+  tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate,
+  filterTypes, filterFlight, isDark,
+  draggingTask, onDropAssign, onEditTaskTime,
+}) {
   const [expanded, setExpanded] = useState(() => new Set());
+  const [editingTask, setEditingTask] = useState(null);
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+
+  // Which employees hold every qualification the currently-dragged backlog
+  // task requires — used to highlight matching shifts and dim the rest.
+  const qualifyingEmployees = useMemo(() => {
+    if (!draggingTask) return null;
+    const quals = {};
+    for (const s of staffShifts) {
+      if (!quals[s.name]) quals[s.name] = new Set();
+      for (const q of s.quals || []) quals[s.name].add(q);
+    }
+    const set = new Set();
+    for (const [name, qualSet] of Object.entries(quals)) {
+      if (hasAllQuals([...qualSet], draggingTask)) set.add(name);
+    }
+    return set;
+  }, [draggingTask, staffShifts]);
 
   const plotData = useMemo(() => {
     const filtered = tasks.filter(t =>
@@ -39,15 +59,21 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
         t.flight.toLowerCase().includes(filterFlight.toLowerCase()))
     );
 
-    if (filtered.length === 0) return null;
-
     const empTypesMap = {};
     for (const t of filtered) {
       if (!empTypesMap[t.employee]) empTypesMap[t.employee] = new Set();
       empTypesMap[t.employee].add(t.reqType);
     }
 
-    const employees = Object.keys(empTypesMap).sort((a, b) => a.localeCompare(b, 'ru'));
+    // Every employee with a shift in the window gets a row even before any
+    // task is assigned to them — so the chart is ready to drag tasks onto
+    // as soon as data loads, not just after the optimizer has run.
+    const employees = [...new Set([
+      ...Object.keys(empTypesMap),
+      ...staffShifts.map(s => s.name),
+    ])].sort((a, b) => a.localeCompare(b, 'ru'));
+
+    if (employees.length === 0) return null;
 
     // Row list (top-down order) + a lookup telling each task which category
     // (yVal) it belongs to: employees with a single qualification, or
@@ -61,14 +87,18 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
     const empRowRange = {}; // employee -> [startIdx, endIdx] (top-down, inclusive)
 
     for (const emp of employees) {
-      const types = [...empTypesMap[emp]].sort();
+      const types = [...(empTypesMap[emp] || [])].sort();
       const splittable = types.length > 1;
       const isExpanded = splittable && expanded.has(emp);
       const startIdx = yRowsTopDown.length;
 
-      if (!splittable) {
+      if (types.length === 0) {
+        // On shift, nothing assigned yet.
         empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label: `${emp} (${types[0]})`, isEmployee: true, hasArrow: false, indent: 0 });
+        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: false, emp, indent: 0 });
+      } else if (!splittable) {
+        empYVal[emp] = emp;
+        yRowsTopDown.push({ yVal: emp, label: `${emp} (${types[0]})`, isEmployee: true, hasArrow: false, emp, indent: 0 });
       } else if (!isExpanded) {
         empYVal[emp] = emp;
         yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: false, emp, indent: 0 });
@@ -76,7 +106,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
         empYVal[emp] = null; // per-task, resolved via reqType below
         yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: true, emp, indent: 0 });
         [...types].reverse().forEach(reqType => {
-          yRowsTopDown.push({ yVal: `${emp}${SEP}${reqType}`, label: reqType, isEmployee: false, hasArrow: false, indent: 1 });
+          yRowsTopDown.push({ yVal: `${emp}${SEP}${reqType}`, label: reqType, isEmployee: false, hasArrow: false, emp, indent: 1 });
         });
       }
 
@@ -131,6 +161,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
         insidetextanchor: 'middle',
         textfont: { size: 10, color: '#fff' },
         customdata: taskList.map(t => ({
+          id:     t.id,
           desc:   t.name,
           flight: t.flight,
           pos:    t.pos,
@@ -146,19 +177,26 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
           'Рейс: <b>%{customdata.flight}</b>  |  POS: %{customdata.pos}<br>' +
           'Время: %{customdata.start} – %{customdata.end}  (%{customdata.dur})<br>' +
           'Квалификация: %{customdata.qual}  |  %{customdata.lock}<br>' +
+          'Клик — изменить время' +
           '<extra>%{customdata.emp}</extra>',
         marker: { color, opacity: 0.9 },
       };
     });
 
-    const legendEntries = orderedEntries.map(([name]) => ({ name, color: colorMap[name] || '#888' }));
-
-    // Shift-duty shading — one faint rect per shift, spanning the employee's
-    // whole row block (so it still covers every sub-row once expanded).
+    // Shift-duty shading — one rect per shift, spanning the employee's whole
+    // row block (so it still covers every sub-row once expanded). While a
+    // backlog task is being dragged, shifts of employees who qualify for it
+    // are highlighted; everyone else fades out.
     const shiftShapes = staffShifts
       .filter(s => empRowRangeBU[s.name])
       .map(s => {
         const [y0, y1] = empRowRangeBU[s.name];
+        let fillcolor = isDark ? 'rgba(90,140,255,0.10)' : 'rgba(30,80,200,0.06)';
+        if (qualifyingEmployees) {
+          fillcolor = qualifyingEmployees.has(s.name)
+            ? (isDark ? 'rgba(82,196,26,0.30)' : 'rgba(82,196,26,0.22)')
+            : (isDark ? 'rgba(90,90,100,0.04)' : 'rgba(90,90,100,0.03)');
+        }
         return {
           type: 'rect',
           xref: 'x',
@@ -167,14 +205,14 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
           x1: s.shiftEnd.getTime(),
           y0: y0 - 0.42,
           y1: y1 + 0.42,
-          fillcolor: isDark ? 'rgba(90,140,255,0.10)' : 'rgba(30,80,200,0.06)',
+          fillcolor,
           line: { width: 0 },
           layer: 'below',
         };
       });
 
-    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount, legendEntries, shiftShapes };
-  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark]);
+    return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount, shiftShapes };
+  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark, qualifyingEmployees]);
 
   function toggleEmployee(emp) {
     setExpanded(prev => {
@@ -184,15 +222,31 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
     });
   }
 
+  function openTimeEditor(taskId) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    setEditingTask(task);
+    setEditStart(toDatetimeLocalValue(task.start));
+    setEditEnd(toDatetimeLocalValue(task.end));
+  }
+
+  function saveTimeEdit() {
+    const newStart = fromDatetimeLocalValue(editStart);
+    const newEnd = fromDatetimeLocalValue(editEnd);
+    if (newEnd <= newStart) return;
+    onEditTaskTime?.(editingTask.id, newStart, newEnd);
+    setEditingTask(null);
+  }
+
   if (!plotData) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 128, color: '#9ca3af', fontSize: 14 }}>
-        Нет назначений — запустите оптимизатор
+        Нет данных — загрузите смены сотрудников на эту дату
       </div>
     );
   }
 
-  const { traces, yOrderBottomUp, rowsTopDown, rowCount, legendEntries, shiftShapes } = plotData;
+  const { traces, yOrderBottomUp, rowsTopDown, rowCount, shiftShapes } = plotData;
 
   const dateObj = new Date((windowStart || selectedDate) + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
@@ -213,7 +267,10 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
   const MARGIN_T = 4;
   const MARGIN_B = 8;
   const chartH     = Math.max(300, rowCount * ROW_PX + MARGIN_T + MARGIN_B);
-  const containerH = Math.min(chartH, 560);
+  // Now that every on-shift employee gets a row (not just ones with tasks
+  // already assigned), the chart can run to hundreds of rows — a taller
+  // viewport means far less scrolling to reach a given time/employee.
+  const containerH = Math.min(chartH, 780);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#E5E7EB';
@@ -222,9 +279,9 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
   const labelBg   = isDark ? '#1a1a2e' : '#FAFAFA';
   const subColor  = isDark ? '#a0a0b8' : '#666';
 
-  // Left label column width — must match the top ruler's left margin so
-  // gridlines / time ticks line up with the bars rendered to its right.
-  const ML = 220;
+  // Left label column width — must match the top ruler's left margin (and
+  // the backlog mini-chart's) so gridlines / time ticks line up everywhere.
+  const ML = GANTT_LABEL_WIDTH;
 
   return (
     <div style={{ border: `1px solid ${borderClr}`, borderRadius: 8, overflow: 'hidden' }}>
@@ -236,7 +293,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
           layout={{
             height: 52,
             margin: { l: ML, r: 16, t: 6, b: 36, autoexpand: false },
-            xaxis: xAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
+            xaxis: ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
             yaxis: { visible: false, fixedrange: true },
             shapes: dayBoundaryShapes,
             paper_bgcolor: 'rgba(0,0,0,0)',
@@ -261,36 +318,49 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
             boxSizing: 'border-box',
           }}
         >
-          {rowsTopDown.map(row => (
-            <div
-              key={row.yVal}
-              onClick={row.hasArrow ? () => toggleEmployee(row.emp) : undefined}
-              title={row.isEmployee ? row.label : undefined}
-              style={{
-                height: ROW_PX,
-                display: 'flex',
-                alignItems: 'center',
-                paddingLeft: 12 + row.indent * 18,
-                paddingRight: 8,
-                cursor: row.hasArrow ? 'pointer' : 'default',
-                fontSize: row.isEmployee ? 14 : 13,
-                fontWeight: row.isEmployee ? 600 : 400,
-                color: row.isEmployee ? fontColor : subColor,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                userSelect: 'none',
-              }}
-            >
-              {row.hasArrow && (
-                <span style={{ display: 'inline-block', width: 14, marginRight: 4, fontSize: 11, color: subColor }}>
-                  {row.arrowOpen ? '▼' : '▶'}
-                </span>
-              )}
-              {!row.isEmployee && <span style={{ marginRight: 4, color: subColor }}>└</span>}
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</span>
-            </div>
-          ))}
+          {rowsTopDown.map(row => {
+            const isQualifying = qualifyingEmployees && qualifyingEmployees.has(row.emp);
+            const isDimmed = qualifyingEmployees && !isQualifying;
+            return (
+              <div
+                key={row.yVal}
+                onClick={row.hasArrow ? () => toggleEmployee(row.emp) : undefined}
+                onDragOver={onDropAssign ? e => e.preventDefault() : undefined}
+                onDrop={onDropAssign ? e => {
+                  e.preventDefault();
+                  const taskId = e.dataTransfer.getData('text/plain');
+                  if (taskId) onDropAssign(taskId, row.emp);
+                } : undefined}
+                title={row.isEmployee ? row.label : undefined}
+                style={{
+                  height: ROW_PX,
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingLeft: 12 + row.indent * 18,
+                  paddingRight: 8,
+                  cursor: row.hasArrow ? 'pointer' : 'default',
+                  fontSize: row.isEmployee ? 14 : 13,
+                  fontWeight: row.isEmployee ? 600 : 400,
+                  color: row.isEmployee ? fontColor : subColor,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  userSelect: 'none',
+                  opacity: isDimmed ? 0.35 : 1,
+                  background: isQualifying ? (isDark ? 'rgba(82,196,26,0.15)' : 'rgba(82,196,26,0.10)') : 'transparent',
+                  transition: 'opacity 0.15s, background 0.15s',
+                }}
+              >
+                {row.hasArrow && (
+                  <span style={{ display: 'inline-block', width: 14, marginRight: 4, fontSize: 11, color: subColor }}>
+                    {row.arrowOpen ? '▼' : '▶'}
+                  </span>
+                )}
+                {!row.isEmployee && <span style={{ marginRight: 4, color: subColor }}>└</span>}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</span>
+              </div>
+            );
+          })}
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -303,7 +373,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
               showlegend: false,
               margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B, autoexpand: false },
               xaxis: {
-                ...xAxisConfig(dateObj, nextDay, fontColor, gridColor, false, windowDays),
+                ...ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, false, windowDays),
                 showgrid: true,
                 fixedrange: false,   // allow zoom/pan in main chart
               },
@@ -315,6 +385,7 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
                 gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
               },
               shapes: [...dayBoundaryShapes, ...shiftShapes],
+              dragmode: 'zoom', // click-drag over the timeline to zoom into a time range; double-click or the "Home" toolbar button resets
               hovermode: 'closest',
               hoverdistance: 2,
               hoverlabel: { font: { size: 13 }, namelength: -1 },
@@ -329,33 +400,67 @@ export default function GanttChart({ tasks, staffShifts = [], windowDays = 1, wi
               scrollZoom: false,
               toImageButtonOptions: { format: 'png', scale: 2 },
             }}
+            onClick={ev => {
+              const id = ev?.points?.[0]?.customdata?.id;
+              if (id != null) openTimeEditor(id);
+            }}
             style={{ width: '100%' }}
             useResizeHandler
           />
         </div>
       </div>
 
-      {/* ── Custom legend — rendered as plain HTML, outside Plotly's layout
-             system entirely, so a long task-type list can never blow up
-             Plotly's auto-margin and desync the label column from the bars
-             (that's what happened when this used Plotly's built-in legend). */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '4px 16px',
-          padding: '10px 16px',
-          borderTop: `1px solid ${borderClr}`,
-          background: plotBg,
-        }}
+      <Modal
+        title="Изменить время задачи"
+        open={!!editingTask}
+        onCancel={() => setEditingTask(null)}
+        onOk={saveTimeEdit}
+        okText="Сохранить"
+        cancelText="Отмена"
       >
-        {legendEntries.map(({ name, color }) => (
-          <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: fontColor }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
-            {name}
-          </span>
-        ))}
-      </div>
+        {editingTask && (
+          <div>
+            <Typography.Text strong>{editingTask.name}</Typography.Text>
+            <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>
+              Рейс {editingTask.flight} · POS {editingTask.pos} · {editingTask.employee}
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+                Начало
+                <input
+                  type="datetime-local"
+                  value={editStart}
+                  onChange={e => setEditStart(e.target.value)}
+                  style={{
+                    padding: '4px 8px',
+                    background: isDark ? '#1f1f1f' : '#fff',
+                    color: isDark ? '#d4d4d4' : '#333',
+                    border: `1px solid ${isDark ? '#444' : '#d9d9d9'}`,
+                    borderRadius: 6,
+                    colorScheme: isDark ? 'dark' : 'light',
+                  }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+                Окончание
+                <input
+                  type="datetime-local"
+                  value={editEnd}
+                  onChange={e => setEditEnd(e.target.value)}
+                  style={{
+                    padding: '4px 8px',
+                    background: isDark ? '#1f1f1f' : '#fff',
+                    color: isDark ? '#d4d4d4' : '#333',
+                    border: `1px solid ${isDark ? '#444' : '#d9d9d9'}`,
+                    borderRadius: 6,
+                    colorScheme: isDark ? 'dark' : 'light',
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
