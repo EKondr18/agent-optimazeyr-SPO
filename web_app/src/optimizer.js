@@ -29,20 +29,30 @@ function samePosition(pos1, pos2, resolver) {
 
 // Back-to-back tasks at meaningfully different positions need walking/driving
 // time between them — without it the assignment isn't physically realistic.
-// With a real distance resolver loaded, this compares the actual gap against
-// how long the walk would take (see travelGraph.js's WALK_SPEED_MPS); without
-// one, it falls back to the old fixed distance-units/time-window heuristic.
+// Per the corporate spec ("22.05. Учет расстояний сети передвижения..."),
+// the reference points aren't just each task's generic POS: the employee's
+// actual EXIT point from the earlier task is its clearup_loc_ref, falling
+// back to dest_loc_ref (task.exitPos below), and their ENTRY point into the
+// later task is its setup_loc_ref, falling back to start_loc_ref
+// (task.entryPos) — using plain start-position for both ends, as before,
+// would get the exit side wrong for any task with a distinct closing
+// procedure. With a real distance resolver loaded, this compares the
+// actual gap against how long that walk would take (see travelGraph.js's
+// WALK_SPEED_MPS); without one, it falls back to the old fixed
+// distance-units/time-window heuristic.
 function hasInsufficientGap(a, b, resolver) {
   const earlier = a.start <= b.start ? a : b;
   const later = a.start <= b.start ? b : a;
   if (later.start < earlier.end) return false; // overlap is handled by tasksOverlap
   const gapMs = later.start - earlier.end;
+  const exitPos = earlier.exitPos ?? earlier.pos;
+  const entryPos = later.entryPos ?? later.pos;
 
-  const neededSeconds = resolver ? resolver.secondsBetween(earlier.pos, later.pos) : null;
+  const neededSeconds = resolver ? resolver.secondsBetween(exitPos, entryPos) : null;
   if (neededSeconds != null) {
     return gapMs < neededSeconds * 1000;
   }
-  return gapMs < MIN_TRANSITION_MS && getPosDistance(earlier.pos, later.pos) >= MIN_TRANSITION_POS_DIST;
+  return gapMs < MIN_TRANSITION_MS && getPosDistance(exitPos, entryPos) >= MIN_TRANSITION_POS_DIST;
 }
 
 // Exported so BacklogPanel's manual-assignment conflict check uses the exact
@@ -78,25 +88,28 @@ export function findConflicts(employeeName, task, tasks, resolver) {
   return empTasks.filter(et => conflictsWith(et, task, resolver));
 }
 
-function getLastTaskPos(empTasks, beforeTime) {
+// Where the employee actually ends up after their last task before the new
+// one — the exit point (clearup_loc_ref / dest_loc_ref), not the generic POS.
+function getLastTaskExitPos(empTasks, beforeTime) {
   const prior = empTasks
     .filter(t => t.end <= beforeTime)
     .sort((a, b) => b.end - a.end);
-  return prior.length > 0 ? prior[0].pos : null;
+  return prior.length > 0 ? (prior[0].exitPos ?? prior[0].pos) : null;
 }
 
 function scoreEmployee(staff, assignedTasks, task, resolver) {
   const empTasks = assignedTasks[staff.name] || [];
-  const lastPos = getLastTaskPos(empTasks, task.start);
+  const lastExitPos = getLastTaskExitPos(empTasks, task.start);
+  const entryPos = task.entryPos ?? task.pos;
   const hasSameFlightDiffTask = empTasks.some(t =>
     t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name
   );
   let dist;
   if (hasSameFlightDiffTask) {
     dist = 0;
-  } else if (lastPos) {
-    const meters = resolver ? resolver.metersBetween(lastPos, task.pos) : null;
-    dist = meters != null ? meters : getPosDistance(lastPos, task.pos);
+  } else if (lastExitPos) {
+    const meters = resolver ? resolver.metersBetween(lastExitPos, entryPos) : null;
+    dist = meters != null ? meters : getPosDistance(lastExitPos, entryPos);
   } else {
     dist = 10;
   }
