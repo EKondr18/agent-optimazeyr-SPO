@@ -358,7 +358,7 @@ export default function App() {
     () => [...new Set(tasksDB.map(t => t.name))].sort(),
     [tasksDB]
   );
-  const backlogCount = currentTasks.filter(t => t.employee === 'Не назначено').length;
+  const backlogCount = ganttTasks.filter(t => t.employee === 'Не назначено').length;
 
   function applyParsedData({ tasks, staffDB: db, colorMap: cm }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
@@ -610,8 +610,10 @@ export default function App() {
       children: (
         <BacklogPanel
           tasks={tasksDB}
-          staffList={currentStaff}
-          selectedDate={selectedDate}
+          staffList={ganttStaff}
+          windowDates={windowDates}
+          windowStart={windowDates[0]}
+          windowDays={GANTT_WINDOW_DAYS}
           colorMap={colorMap}
           onAssign={handleAssign}
           isDark={isDark}
