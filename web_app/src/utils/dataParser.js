@@ -131,6 +131,10 @@ export function parseCSV(csvText) {
       name: description,
       flight: flightNumber,
       pos,
+      // This CSV format only ever carries one POS column — no separate
+      // setup/clearup segments to distinguish entry from exit.
+      entryPos: pos,
+      exitPos: pos,
       zone,
       baseStart: new Date(start),
       baseEnd: new Date(end),
@@ -350,6 +354,17 @@ function parseOrders(orders) {
     const name = o.flight_event_ref || o.order_rule_ref || 'Задача';
     const reqTypes = Array.isArray(o.req_qual_vector) ? o.req_qual_vector.filter(Boolean) : [];
     const reqType = reqTypes.join(' + ');
+    // A task can have up to 4 location segments — entry (setup, high
+    // priority) falling back to start, and exit (clearup, high priority)
+    // falling back to dest. Confirmed against the corporate spec ("22.05.
+    // Учет расстояний сети передвижения..."): this is exactly the pair the
+    // real system uses to compute travel time to/from a task, not just
+    // start_loc_ref alone. `pos` keeps the old start-based value for
+    // display (POS tags, hover) since that's what a dispatcher expects to
+    // see as "the task's stand"; entryPos/exitPos are what the optimizer's
+    // travel-time logic actually uses.
+    const entryPos = o.setup_loc_ref || o.start_loc_ref || 'ПЕРРОН';
+    const exitPos = o.clearup_loc_ref || o.dest_loc_ref || 'ПЕРРОН';
     const pos = o.start_loc_ref || 'ПЕРРОН';
     const flight = o.flight_ref || o.outbound_flight_ref || o.inbound_flight_ref || 'Рейс не указ.';
 
@@ -373,6 +388,8 @@ function parseOrders(orders) {
       name,
       flight,
       pos,
+      entryPos,
+      exitPos,
       zone: 'APRON',
       baseStart: new Date(start),
       baseEnd: new Date(end),
