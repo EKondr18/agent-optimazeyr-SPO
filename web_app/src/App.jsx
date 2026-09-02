@@ -9,7 +9,8 @@ import {
   MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
   UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
 } from '@ant-design/icons';
-import { parseCSV, parseJsonExport } from './utils/dataParser';
+import Papa from 'papaparse';
+import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { runOptimizer, reassignDelayedConflicts } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
@@ -33,19 +34,78 @@ function shiftYMD(dateStr, days) {
 }
 
 // Slot key -> the parseJsonExport argument name it feeds, and the label shown
-// next to its own upload input.
+// next to its own upload input. csvArg is the matching parseCsvCollections
+// argument name for the CSV upload flow.
 const JSON_FILE_SLOTS = [
-  { key: 'orders', label: 'tb_sub_orders' },
-  { key: 'shifts', label: 'tb_shifts' },
-  { key: 'resources', label: 'tb_resources' },
-  { key: 'resQual', label: 'tb_res_qual' },
-  { key: 'resourceQualifications', label: 'tb_relation_resource_qualification' },
-  { key: 'shiftQualifications', label: 'tb_relation_shift_qualification' },
+  { key: 'orders', label: 'tb_sub_orders', csvArg: 'ordersCsv' },
+  { key: 'shifts', label: 'tb_shifts', csvArg: 'shiftsCsv' },
+  { key: 'resources', label: 'tb_resources', csvArg: 'resourcesCsv' },
+  { key: 'resQual', label: 'tb_res_qual', csvArg: 'resQualCsv' },
+  { key: 'resourceQualifications', label: 'tb_relation_resource_qualification', csvArg: 'resourceQualificationsCsv' },
+  { key: 'shiftQualifications', label: 'tb_relation_shift_qualification', csvArg: 'shiftQualificationsCsv' },
 ];
+
+// A single drag-and-drop upload target: click or drop a .csv/.txt file,
+// reporting the raw text back to the caller. Keeps its own drag-hover state
+// locally so drag events don't need to be plumbed through the parent.
+function FileDropzone({ label, isDark, status, onFile }) {
+  const [isOver, setIsOver] = useState(false);
+  const inputRef = useRef();
+
+  function readFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => onFile(file.name, ev.target.result);
+    reader.onerror = () => onFile(file.name, null, 'не удалось прочитать файл');
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+      <div
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => { e.preventDefault(); setIsOver(true); }}
+        onDragLeave={() => setIsOver(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setIsOver(false);
+          readFile(e.dataTransfer.files[0]);
+        }}
+        style={{
+          border: `1px dashed ${isOver ? '#1677ff' : (isDark ? '#444' : '#ccc')}`,
+          borderRadius: 6,
+          padding: '6px 8px',
+          textAlign: 'center',
+          fontSize: 11,
+          cursor: 'pointer',
+          background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
+          color: isDark ? '#888' : '#999',
+        }}
+      >
+        {status?.error ? (
+          <span style={{ color: '#ff4d4f' }}>Ошибка: {status.error}</span>
+        ) : status?.filename ? (
+          <span style={{ color: '#52c41a' }}>✓ {status.filename} ({status.rowCount})</span>
+        ) : (
+          'перетащите файл или нажмите'
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv,.txt,.json"
+        onChange={e => { readFile(e.target.files[0]); e.target.value = ''; }}
+        style={{ display: 'none' }}
+      />
+    </div>
+  );
+}
 
 function SidebarContent({
   isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
   manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
+  csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   availableDates, selectedDate, setSelectedDate, setOptimizerRan,
   handleRunOptimizer, handleResetBacklog,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
@@ -119,6 +179,35 @@ function SidebarContent({
                     Загрузить
                   </Button>
                   <Button size="small" onClick={handleManualJsonClear}>
+                    Очистить
+                  </Button>
+                </Space>
+              </Space>
+            ),
+          }, {
+            key: 'manual-csv',
+            label: <span style={{ fontSize: 12 }}>📄 Загрузить CSV вручную (6 файлов)</span>,
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                {JSON_FILE_SLOTS.map(({ key, label }) => (
+                  <FileDropzone
+                    key={key}
+                    label={label}
+                    isDark={isDark}
+                    status={csvFiles[key]}
+                    onFile={(filename, text, readError) => handleCsvFileSelect(key, filename, text, readError)}
+                  />
+                ))}
+                <Space style={{ width: '100%' }}>
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={!csvAllReady}
+                    onClick={() => { handleCsvLoad(); onClose?.(); }}
+                  >
+                    Загрузить
+                  </Button>
+                  <Button size="small" onClick={handleCsvClear}>
                     Очистить
                   </Button>
                 </Space>
@@ -218,9 +307,11 @@ export default function App() {
   const [mobileBroken, setMobileBroken] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [manualFiles, setManualFiles] = useState({});
+  const [csvFiles, setCsvFiles] = useState({});
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
+  const csvAllReady = JSON_FILE_SLOTS.every(s => csvFiles[s.key]?.text && !csvFiles[s.key]?.error);
 
   useEffect(() => {
     document.body.style.background = isDark ? '#0d0d0d' : '#f5f5f5';
@@ -373,6 +464,40 @@ export default function App() {
     setManualFiles({});
   }
 
+  function handleCsvFileSelect(key, filename, text, readError) {
+    if (readError) {
+      setCsvFiles(prev => ({ ...prev, [key]: { filename, text: null, rowCount: 0, error: readError } }));
+      return;
+    }
+    try {
+      const rows = Papa.parse(text.trim(), { header: true, skipEmptyLines: true });
+      if (rows.errors.length > 0) throw new Error(rows.errors[0].message);
+      setCsvFiles(prev => ({ ...prev, [key]: { filename, text, rowCount: rows.data.length, error: null } }));
+    } catch (err) {
+      setCsvFiles(prev => ({ ...prev, [key]: { filename, text: null, rowCount: 0, error: err.message } }));
+    }
+  }
+
+  function handleCsvLoad() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const args = {};
+      for (const { key, csvArg } of JSON_FILE_SLOTS) args[csvArg] = csvFiles[key]?.text;
+      const parsed = parseCsvCollections(args);
+      if (parsed.tasks.length === 0) throw new Error('Загруженные файлы не содержат задач');
+      applyParsedData(parsed);
+    } catch (e) {
+      setError(`Ошибка загрузки: ${e.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleCsvClear() {
+    setCsvFiles({});
+  }
+
   function handleRunOptimizer() {
     const updated = runOptimizer(tasksDB, staffDB, selectedDate);
     setTasksDB(updated);
@@ -432,6 +557,7 @@ export default function App() {
   const sidebarProps = {
     isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
     manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
+    csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     availableDates, selectedDate, setSelectedDate, setOptimizerRan,
     handleRunOptimizer, handleResetBacklog,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
