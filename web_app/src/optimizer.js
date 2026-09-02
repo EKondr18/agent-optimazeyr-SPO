@@ -120,9 +120,15 @@ function posDist(posA, posB, resolver) {
 // cost instead: dist(before, task) + dist(task, after) - dist(before, after)
 // — the actual marginal distance this task adds to the employee's day, given
 // where they already are before and after it, not just a one-sided look-back.
+//
+// When there's no real predecessor task yet (this would be the first task
+// of the employee's day, or the first one before whatever's already
+// scheduled), the shift's own base location (staff.basePos) stands in as
+// the virtual predecessor — the same reference point the spec uses for a
+// shift's very first task, not a special case needing separate handling.
 function scoreEmployee(staff, assignedTasks, task, resolver) {
   const empTasks = assignedTasks[staff.name] || [];
-  const lastExitPos = getLastTaskExitPos(empTasks, task.start);
+  const lastExitPos = getLastTaskExitPos(empTasks, task.start) ?? staff.basePos ?? null;
   const nextEntryPos = getNextTaskEntryPos(empTasks, task.end);
   const entryPos = task.entryPos ?? task.pos;
   const exitPos = task.exitPos ?? task.pos;
