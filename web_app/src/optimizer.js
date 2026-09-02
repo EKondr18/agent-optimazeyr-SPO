@@ -107,7 +107,10 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
 
     assignedTasks[currentEmp] = empTasks;
 
-    // Pass A: best-scoring qualified employee, in shift, no conflicts
+    // Pass A: best-scoring qualified employee, in shift, no conflicts.
+    // Load is compared first so tasks spread across everyone qualified
+    // instead of piling onto whoever happens to be positionally closest —
+    // distance only breaks ties between similarly-loaded candidates.
     let bestStaff = null, bestScore = null;
     for (const s of staff) {
       if (s.name === currentEmp) continue;
@@ -115,8 +118,8 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const score = scoreEmployee(s, assignedTasks, task);
-      if (!bestScore || score.dist < bestScore.dist ||
-          (score.dist === bestScore.dist && score.load < bestScore.load)) {
+      if (!bestScore || score.load < bestScore.load ||
+          (score.load === bestScore.load && score.dist < bestScore.dist)) {
         bestScore = score; bestStaff = s;
       }
     }
@@ -189,6 +192,11 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   });
 
   // ── PASS 1: Greedy – best-scoring employee within shift ──────────────────
+  // Load is compared before distance so work spreads across everyone
+  // qualified instead of piling onto whoever happens to be positionally
+  // closest each time — without this, an employee whose last task ends near
+  // the next one keeps winning indefinitely while equally-qualified staff
+  // sit idle (distance only breaks ties between similarly-loaded people).
   let backlog = [];
   for (const task of toAssign) {
     let bestStaff = null, bestScore = null;
@@ -197,8 +205,8 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
       if (hasConflict(assignedTasks[s.name] || [], task)) continue;
       const score = scoreEmployee(s, assignedTasks, task);
-      if (!bestScore || score.dist < bestScore.dist ||
-          (score.dist === bestScore.dist && score.load < bestScore.load)) {
+      if (!bestScore || score.load < bestScore.load ||
+          (score.load === bestScore.load && score.dist < bestScore.dist)) {
         bestScore = score; bestStaff = s;
       }
     }
@@ -206,10 +214,17 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
   }
 
   // ── PASS 2: Rotation – relocate conflicting tasks to free up a slot ──────
+  // Try least-loaded staff first (recomputed per task, since assignments
+  // shift as tasks get placed) — the previous fixed staff-array order let
+  // whoever came first alphabetically/positionally soak up every task that
+  // fell through to this pass.
   let remaining = [];
   for (const task of backlog) {
     let resolved = false;
-    for (const s of staff) {
+    const staffByLoad = [...staff].sort(
+      (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
+    );
+    for (const s of staffByLoad) {
       if (resolved) break;
       if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
@@ -231,7 +246,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
       );
       for (const conflict of conflicts) {
         let moved = false;
-        for (const alt of staff) {
+        for (const alt of staffByLoad) {
           if (alt.name === s.name) continue;
           if (!hasAllQuals(alt.quals, conflict)) continue;
           if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;

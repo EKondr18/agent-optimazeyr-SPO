@@ -20,10 +20,13 @@ function fmt(d) {
 }
 
 // Check whether assigning `task` to `employeeName` creates a time conflict.
-// Returns array of conflicting tasks (empty = no conflict).
-function getConflicts(employeeName, task, tasks, selectedDate) {
+// Returns array of conflicting tasks (empty = no conflict). Deliberately not
+// filtered by date: the backlog now spans a 3-day window, and a task can be
+// bucketed under one day's date while its actual time overlaps a task
+// bucketed under the next (a shift/task crossing midnight) — the start/end
+// Date comparison below is what actually matters, not the date label.
+function getConflicts(employeeName, task, tasks) {
   const empTasks = tasks.filter(t =>
-    t.date === selectedDate &&
     t.employee === employeeName &&
     t.id !== task.id
   );
@@ -43,12 +46,12 @@ function getConflicts(employeeName, task, tasks, selectedDate) {
   return result;
 }
 
-function xAxisCfg(dateObj, nextDay, fontColor, gridColor, showLabels) {
+function xAxisCfg(dateObj, nextDay, fontColor, gridColor, showLabels, windowDays) {
   return {
     type: 'date',
     range: [dateObj.getTime(), nextDay.getTime()],
-    tickformat: '%H:%M',
-    dtick: 3600000 * 2,
+    tickformat: windowDays > 1 ? '%H:%M\n%d.%m' : '%H:%M',
+    dtick: 3600000 * (windowDays > 1 ? 4 : 2),
     gridcolor: gridColor,
     tickfont: { color: fontColor, size: 11 },
     showticklabels: showLabels,
@@ -59,9 +62,9 @@ function xAxisCfg(dateObj, nextDay, fontColor, gridColor, showLabels) {
 }
 
 // Replicates GanttChart visual style for unassigned tasks
-function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
-  const dateObj = new Date(selectedDate + 'T00:00:00');
-  const nextDay  = new Date(dateObj.getTime() + 24 * 3600000);
+function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark }) {
+  const dateObj = new Date(windowStart + 'T00:00:00');
+  const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
 
   const { traces, yOrderBottomUp, rowCount } = useMemo(() => {
     const flightSet = [...new Set(unassigned.map(t => t.flight))].sort();
@@ -135,7 +138,7 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
           layout={{
             height: 44,
             margin: { l: ML, r: 16, t: 6, b: 28 },
-            xaxis: xAxisCfg(dateObj, nextDay, fontColor, gridColor, true),
+            xaxis: xAxisCfg(dateObj, nextDay, fontColor, gridColor, true, windowDays),
             yaxis: { visible: false, fixedrange: true },
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
@@ -158,7 +161,7 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
             showlegend: true,
             margin: { l: ML, r: 16, t: 4, b: 54 },
             xaxis: {
-              ...xAxisCfg(dateObj, nextDay, fontColor, gridColor, false),
+              ...xAxisCfg(dateObj, nextDay, fontColor, gridColor, false, windowDays),
               showgrid: true,
               fixedrange: false,
             },
@@ -195,13 +198,13 @@ function BacklogGantt({ unassigned, colorMap, selectedDate, isDark }) {
   );
 }
 
-export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap, onAssign, isDark }) {
+export default function BacklogPanel({ tasks, staffList, windowDates, windowStart, windowDays, colorMap, onAssign, isDark }) {
   const [selections, setSelections] = useState({});
   const [conflictInfo, setConflictInfo] = useState(null);
 
   const unassigned = useMemo(
-    () => tasks.filter(t => t.date === selectedDate && t.employee === 'Не назначено'),
-    [tasks, selectedDate]
+    () => tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено'),
+    [tasks, windowDates]
   );
 
   if (unassigned.length === 0) {
@@ -209,7 +212,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
   }
 
   function handleAssignClick(task, sel) {
-    const conflicts = getConflicts(sel, task, tasks, selectedDate);
+    const conflicts = getConflicts(sel, task, tasks);
     if (conflicts.length === 0) {
       onAssign(task.id, sel, true);
       setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
@@ -220,7 +223,7 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
         hasAllQuals(s.quals, task) &&
         s.shiftStart <= task.start &&
         task.end <= s.shiftEnd &&
-        getConflicts(s.name, task, tasks, selectedDate).length === 0
+        getConflicts(s.name, task, tasks).length === 0
       );
       setConflictInfo({ task, sel, conflicts, alternatives });
     }
@@ -228,10 +231,11 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
 
   const columns = [
     {
-      title: 'Время',
+      title: 'Дата / Время',
       key: 'time',
-      width: 120,
-      render: (_, t) => `${fmt(t.start)}–${fmt(t.end)}`,
+      width: 150,
+      render: (_, t) => `${t.date} ${fmt(t.start)}–${fmt(t.end)}`,
+      sorter: (a, b) => a.start - b.start,
     },
     {
       title: 'Тип задачи',
@@ -296,7 +300,8 @@ export default function BacklogPanel({ tasks, staffList, selectedDate, colorMap,
       <BacklogGantt
         unassigned={unassigned}
         colorMap={colorMap}
-        selectedDate={selectedDate}
+        windowStart={windowStart}
+        windowDays={windowDays}
         isDark={isDark}
       />
 

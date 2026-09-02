@@ -254,10 +254,15 @@ export function parseCSV(csvText) {
 // degree: null hasn't been clarified, so nothing is being excluded based on
 // either field yet.
 //
-// tb_sub_orders carries no res_assigned_to_ref/shift_assigned_to_ref in the
-// real export — every task arrives unassigned, which is exactly the
-// optimizer's input shape (nothing to pre-lock). The res_assigned_to_ref
-// handling below is kept only in case a future export does carry it.
+// tb_sub_orders.res_assigned_to_ref/shift_assigned_to_ref ARE deliberately
+// ignored by parseOrders: a real export does carry them on a large share of
+// records (confirmed — not an edge case), but that reflects the source
+// system's own scheduling state, not a decision a dispatcher made inside
+// this app. Every order always starts unassigned/unlocked here; a lock is
+// only ever earned through this app's own manual assignment or optimizer
+// run — otherwise the Gantt would show a pre-populated schedule before the
+// optimizer is even clicked, and those pre-populated assignments would
+// carry no actual conflict-checking guarantee.
 //
 // Still unresolved (flagged, not guessed): no flights reference table, so
 // task.flight falls back to the raw flight_ref/outbound/inbound id; no
@@ -332,7 +337,7 @@ function buildShiftQualMap(shiftQualifications, qualDict) {
   return map;
 }
 
-function parseOrders(orders, resourceMap) {
+function parseOrders(orders) {
   const colorIndex = {};
   let colorCounter = 0;
   const tasks = [];
@@ -353,9 +358,14 @@ function parseOrders(orders, resourceMap) {
       colorCounter++;
     }
 
-    const resource = o.res_assigned_to_ref ? resourceMap.get(String(o.res_assigned_to_ref)) : null;
-    const employee = displayName(resource) || (o.res_assigned_to_ref ? o.res_assigned_to_ref : 'Не назначено');
-    const isLocked = Boolean(o.res_assigned_to_ref);
+    // res_assigned_to_ref/shift_assigned_to_ref are deliberately ignored:
+    // a real export does carry them (confirmed — ~2/3 of a real tb_sub_orders
+    // batch had them set), but that reflects the source system's own
+    // scheduling, not a decision made by a dispatcher inside this app. Every
+    // order always starts unassigned/unlocked here; a lock is only ever
+    // earned through this app's own manual assignment or optimizer run.
+    const employee = 'Не назначено';
+    const isLocked = false;
 
     tasks.push({
       id: o._id,
@@ -442,7 +452,7 @@ export function parseJsonExport({
   const resourceQualMap = buildResourceQualMap(resourceQualifications, qualDict);
   const shiftQualMap = buildShiftQualMap(shiftQualifications, qualDict);
 
-  const tasks = parseOrders(orders, resourceMap);
+  const tasks = parseOrders(orders);
   const staffDB = parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap);
 
   const colorMap = {};
