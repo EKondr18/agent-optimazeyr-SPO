@@ -435,6 +435,12 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
       zone: 'APRON',
       shiftStart,
       shiftEnd,
+      // Per the corporate spec, the shift's own location_ref (not
+      // default_location_ref) is what an employee's first task of the day
+      // is measured against for travel time — confirmed against the real
+      // export: every shift has location_ref '*', which is itself a real,
+      // connected node in the travel network, not a placeholder to skip.
+      basePos: s.location_ref || s.default_location_ref || null,
     };
 
     const cur = new Date(shiftStart);
