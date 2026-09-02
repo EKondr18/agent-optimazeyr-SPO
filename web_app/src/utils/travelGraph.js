@@ -13,12 +13,11 @@
 //
 // "Distance" units aren't labeled in the source data. Values range 0–5000
 // in steps of 5, consistent with meters for an airport apron — treated as
-// meters below, but that's this app's assumption for the walk-time
-// conversion, not a confirmed fact from the data itself.
+// meters below.
 
-const WALK_SPEED_MPS = 1.2; // brisk walking pace (~4.3 km/h) — a chosen
-// engineering default for converting a distance into a travel-time budget,
-// not a value extracted from any dataset. Adjust if a real figure surfaces.
+const WALK_SPEED_KMH = 5; // confirmed: resource movement speed is 5 km/h
+// (matches tb_order_rules.csv's travel_time_velocity: 5.0 seen on most rules).
+const WALK_SPEED_MPS = (WALK_SPEED_KMH * 1000) / 3600;
 
 export function buildLocationNodeMap(locations) {
   const map = new Map();
