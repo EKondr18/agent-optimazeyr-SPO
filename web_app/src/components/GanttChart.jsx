@@ -1,8 +1,9 @@
 import Plot from 'react-plotly.js';
 import { useMemo, useState } from 'react';
 import { Modal, Button, Typography } from 'antd';
-import { ganttXAxisConfig, GANTT_LABEL_WIDTH } from '../utils/ganttAxis';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
 import { hasAllQuals } from '../optimizer';
+import { getPosDistance } from '../utils/posDistance';
 
 function fmt(d) {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
@@ -23,12 +24,14 @@ function fromDatetimeLocalValue(s) {
 }
 
 const SEP = '—';
+const TRAVEL_KEY = '__TRAVEL__';
 const ROW_PX = 30;
 
 export default function GanttChart({
   tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate,
-  filterTypes, filterFlight, isDark,
+  filterTypes, filterFlight, isDark, distanceResolver,
   draggingTask, onDropAssign, onEditTaskTime, onUnassignTask,
+  visibleRange, onVisibleRangeChange,
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [editingTask, setEditingTask] = useState(null);
@@ -76,6 +79,18 @@ export default function GanttChart({
       for (const q of s.quals || []) empRealQuals[s.name].add(q);
     }
 
+    // How late an employee's day has run relative to how it was originally
+    // scheduled — the biggest delay among their tasks (baseStart is the
+    // original imported time; start is where it landed after a delay was
+    // applied). Shown as a badge next to their name.
+    const empDelayMinutes = {};
+    for (const t of filtered) {
+      if (t.baseStart && t.start > t.baseStart) {
+        const mins = Math.round((t.start - t.baseStart) / 60000);
+        if (mins > 0) empDelayMinutes[t.employee] = Math.max(empDelayMinutes[t.employee] || 0, mins);
+      }
+    }
+
     // Every employee with a shift in the window gets a row even before any
     // task is assigned to them — so the chart is ready to drag tasks onto
     // as soon as data loads, not just after the optimizer has run.
@@ -87,12 +102,13 @@ export default function GanttChart({
     if (employees.length === 0) return null;
 
     // Row list (top-down order) + a lookup telling each task which category
-    // (yVal) it belongs to: employees with a single qualification, or
-    // collapsed multi-qual employees, get ONE row carrying all their tasks;
-    // an employee is only split into per-qualification sub-rows once the
-    // user expands them via the arrow. empRowRange tracks each employee's
-    // contiguous row block (top-down indices) so the shift-shading rect can
-    // span every sub-row when expanded.
+    // (yVal) it belongs to. An employee expands (via the arrow) into one
+    // sub-row per qualification they hold — even just one — plus a
+    // dedicated "Время перехода" sub-row showing the gaps between their
+    // tasks as bars. Only an employee with zero known qualifications at all
+    // gets no arrow, since there's nothing to expand into.
+    // empRowRange tracks each employee's contiguous row block (top-down
+    // indices) so the shift-shading rect can span every sub-row when expanded.
     const yRowsTopDown = [];
     const empYVal = {}; // employee -> yVal to use when collapsed / single-qual
     const empRowRange = {}; // employee -> [startIdx, endIdx] (top-down, inclusive)
@@ -102,26 +118,25 @@ export default function GanttChart({
       const types = assignedTypes && assignedTypes.size > 0
         ? [...assignedTypes].sort()
         : [...(empRealQuals[emp] || [])].sort();
-      const splittable = types.length > 1;
-      const isExpanded = splittable && expanded.has(emp);
+      const hasArrow = types.length >= 1;
+      const isExpanded = hasArrow && expanded.has(emp);
       const startIdx = yRowsTopDown.length;
+      const delayMin = empDelayMinutes[emp];
 
-      if (types.length === 0) {
-        // On shift, nothing assigned yet.
+      if (!hasArrow) {
         empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: false, emp, indent: 0 });
-      } else if (!splittable) {
-        empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label: `${emp} (${types[0]})`, isEmployee: true, hasArrow: false, emp, indent: 0 });
+        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: false, emp, indent: 0, delayMin });
       } else if (!isExpanded) {
+        const label = types.length === 1 ? `${emp} (${types[0]})` : emp;
         empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: false, emp, indent: 0 });
+        yRowsTopDown.push({ yVal: emp, label, isEmployee: true, hasArrow: true, arrowOpen: false, emp, indent: 0, delayMin });
       } else {
         empYVal[emp] = null; // per-task, resolved via reqType below
-        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: true, emp, indent: 0 });
+        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: true, emp, indent: 0, delayMin });
         [...types].reverse().forEach(reqType => {
           yRowsTopDown.push({ yVal: `${emp}${SEP}${reqType}`, label: reqType, isEmployee: false, hasArrow: false, emp, indent: 1 });
         });
+        yRowsTopDown.push({ yVal: `${emp}${SEP}${TRAVEL_KEY}`, label: 'Время перехода', isEmployee: false, hasArrow: false, emp, indent: 1, isTravelRow: true });
       }
 
       empRowRange[emp] = [startIdx, yRowsTopDown.length - 1];
@@ -197,6 +212,63 @@ export default function GanttChart({
       };
     });
 
+    // Travel-time bars: one per real gap between two consecutive tasks of
+    // an expanded employee, drawn on their dedicated "Время перехода" row —
+    // the same exit/entry points and required-time logic the optimizer
+    // itself uses (see optimizer.js's hasInsufficientGap), just surfaced
+    // visually instead of only affecting assignment decisions. Red where
+    // the gap doesn't actually cover the needed travel time, muted grey
+    // where it comfortably does.
+    const travelX = [], travelBase = [], travelY = [], travelColor = [], travelCustom = [];
+    for (const emp of employees) {
+      if (!expanded.has(emp)) continue;
+      const empTasksSorted = filtered.filter(t => t.employee === emp).sort((a, b) => a.start - b.start);
+      for (let i = 1; i < empTasksSorted.length; i++) {
+        const prev = empTasksSorted[i - 1];
+        const cur = empTasksSorted[i];
+        if (cur.start <= prev.end) continue; // overlapping (complementary-task exemption) — nothing to walk
+        const exitPos = prev.exitPos ?? prev.pos;
+        const entryPos = cur.entryPos ?? cur.pos;
+        const gapMs = cur.start - prev.end;
+        const neededSeconds = distanceResolver ? distanceResolver.secondsBetween(exitPos, entryPos) : null;
+        const insufficient = neededSeconds != null
+          ? gapMs < neededSeconds * 1000
+          : (gapMs < 5 * 60000 && getPosDistance(exitPos, entryPos) >= 5);
+        travelX.push(gapMs);
+        travelBase.push(prev.end.getTime());
+        travelY.push(`${emp}${SEP}${TRAVEL_KEY}`);
+        travelColor.push(insufficient ? '#ff4d4f' : (isDark ? '#5a6b8c' : '#a8b5cc'));
+        const neededMin = neededSeconds != null ? Math.round(neededSeconds / 60) : null;
+        travelCustom.push({
+          from: exitPos,
+          to: entryPos,
+          gapMin: Math.round(gapMs / 60000),
+          // Pre-formatted in JS since Plotly's hovertemplate has no
+          // conditional syntax to only show this when neededMin is known.
+          neededText: neededMin != null ? ` (нужно: ${neededMin} мин)` : '',
+          status: insufficient ? '⚠️ Не хватает времени' : 'В пределах нормы',
+        });
+      }
+    }
+    if (travelX.length > 0) {
+      traces.push({
+        type: 'bar',
+        orientation: 'h',
+        name: 'Время перехода',
+        x: travelX,
+        base: travelBase,
+        y: travelY,
+        customdata: travelCustom,
+        hovertemplate:
+          '<b>Переход</b>: %{customdata.from} → %{customdata.to}<br>' +
+          'Разрыв: %{customdata.gapMin} мин%{customdata.neededText}<br>' +
+          '%{customdata.status}' +
+          '<extra></extra>',
+        marker: { color: travelColor, opacity: 0.85 },
+        showlegend: false,
+      });
+    }
+
     // Shift-duty shading — one rect per shift, spanning the employee's whole
     // row block (so it still covers every sub-row once expanded). While a
     // backlog task is being dragged, shifts of employees who qualify for it
@@ -226,7 +298,7 @@ export default function GanttChart({
       });
 
     return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount, shiftShapes };
-  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark, qualifyingEmployees]);
+  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark, qualifyingEmployees, distanceResolver]);
 
   function toggleEmployee(emp) {
     setExpanded(prev => {
@@ -252,6 +324,11 @@ export default function GanttChart({
     setEditingTask(null);
   }
 
+  function handleRelayout(ev) {
+    const r = parseRelayoutXRange(ev);
+    if (r !== undefined) onVisibleRangeChange?.(r);
+  }
+
   if (!plotData) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 128, color: '#9ca3af', fontSize: 14 }}>
@@ -264,9 +341,14 @@ export default function GanttChart({
 
   const dateObj = new Date((windowStart || selectedDate) + 'T00:00:00');
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
+  // The visible time range is shared/controlled from above (App.jsx) so
+  // zooming this chart also updates the backlog chart's ruler and vice
+  // versa — falls back to the full window when nothing's zoomed yet.
+  const range = visibleRange || [dateObj.getTime(), nextDay.getTime()];
 
-  // Dashed separators at each midnight boundary inside the visible window,
-  // so multi-day bars are still easy to read as "day 1 / day 2 / day 3".
+  // Dashed separators at each midnight boundary inside the full window (not
+  // just the zoomed-in range), so multi-day bars are still easy to read as
+  // "day 1 / day 2 / day 3" regardless of zoom level.
   const dayBoundaryShapes = Array.from({ length: windowDays - 1 }, (_, i) => ({
     type: 'line',
     xref: 'x',
@@ -314,7 +396,7 @@ export default function GanttChart({
           layout={{
             height: 52,
             margin: { l: ML, r: 16 + rulerExtraMargin, t: 6, b: 36, autoexpand: false },
-            xaxis: ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, true, windowDays),
+            xaxis: ganttXAxisConfig(range, fontColor, gridColor, true),
             yaxis: { visible: false, fixedrange: true },
             shapes: dayBoundaryShapes,
             paper_bgcolor: 'rgba(0,0,0,0)',
@@ -362,7 +444,8 @@ export default function GanttChart({
                   cursor: row.hasArrow ? 'pointer' : 'default',
                   fontSize: row.isEmployee ? 14 : 13,
                   fontWeight: row.isEmployee ? 600 : 400,
-                  color: row.isEmployee ? fontColor : subColor,
+                  color: row.isTravelRow ? subColor : (row.isEmployee ? fontColor : subColor),
+                  fontStyle: row.isTravelRow ? 'italic' : 'normal',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -379,6 +462,23 @@ export default function GanttChart({
                 )}
                 {!row.isEmployee && <span style={{ marginRight: 4, color: subColor }}>└</span>}
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</span>
+                {row.delayMin > 0 && (
+                  <span
+                    title={`Задержка ~${row.delayMin} мин относительно исходного времени`}
+                    style={{
+                      marginLeft: 6,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: '#fff',
+                      background: row.delayMin > 30 ? '#ff4d4f' : '#faad14',
+                      borderRadius: 4,
+                      padding: '1px 5px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    ⏱️+{row.delayMin}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -394,7 +494,7 @@ export default function GanttChart({
               showlegend: false,
               margin: { l: 0, r: 16, t: MARGIN_T, b: MARGIN_B, autoexpand: false },
               xaxis: {
-                ...ganttXAxisConfig(dateObj, nextDay, fontColor, gridColor, false, windowDays),
+                ...ganttXAxisConfig(range, fontColor, gridColor, false),
                 showgrid: true,
                 fixedrange: false,   // allow zoom/pan in main chart
               },
@@ -425,6 +525,7 @@ export default function GanttChart({
               const id = ev?.points?.[0]?.customdata?.id;
               if (id != null) openTimeEditor(id);
             }}
+            onRelayout={handleRelayout}
             style={{ width: '100%' }}
             useResizeHandler
           />

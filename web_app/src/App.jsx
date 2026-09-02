@@ -431,6 +431,10 @@ export default function App() {
   const [travelGraphFile, setTravelGraphFile] = useState(null);
   const [conflictInfo, setConflictInfo] = useState(null);
   const [draggingTask, setDraggingTask] = useState(null);
+  // Shared zoom/pan range between the main Gantt and the backlog mini-chart
+  // — null means "show the full window" (default); set by either chart's
+  // onRelayout so zooming one updates both rulers together.
+  const [ganttVisibleRange, setGanttVisibleRange] = useState(null);
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
@@ -770,13 +774,22 @@ export default function App() {
       ),
       children: (
         <div>
-          <Input
-            placeholder="Фильтр по рейсу…"
-            value={filterFlight}
-            onChange={e => setFilterFlight(e.target.value)}
-            allowClear
-            style={{ width: 220, marginBottom: 12 }}
-          />
+          <Space style={{ marginBottom: 12 }} wrap>
+            <Input
+              placeholder="Фильтр по рейсу…"
+              value={filterFlight}
+              onChange={e => setFilterFlight(e.target.value)}
+              allowClear
+              style={{ width: 220 }}
+            />
+            <Button
+              size="small"
+              disabled={!ganttVisibleRange}
+              onClick={() => setGanttVisibleRange(null)}
+            >
+              🔍 Сбросить масштаб
+            </Button>
+          </Space>
           <GanttChart
             tasks={ganttTasks}
             staffShifts={ganttStaff}
@@ -791,6 +804,9 @@ export default function App() {
             onDropAssign={handleDropAssign}
             onEditTaskTime={handleEditTaskTime}
             onUnassignTask={taskId => handleAssign(taskId, 'Не назначено', false)}
+            distanceResolver={distanceResolver}
+            visibleRange={ganttVisibleRange}
+            onVisibleRangeChange={setGanttVisibleRange}
           />
         </div>
       ),
@@ -817,6 +833,8 @@ export default function App() {
           distanceResolver={distanceResolver}
           onAssignAttempt={attemptAssign}
           onDragTaskChange={setDraggingTask}
+          visibleRange={ganttVisibleRange}
+          onVisibleRangeChange={setGanttVisibleRange}
         />
       ),
     },
