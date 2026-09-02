@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space, Modal, Alert, Typography } from 'antd';
 import Plot from 'react-plotly.js';
 import { hasAllQuals } from '../optimizer';
+import { getPosDistance } from '../utils/posDistance';
 
 const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
 
@@ -28,8 +29,15 @@ function getConflicts(employeeName, task, tasks, selectedDate) {
   );
   const result = [];
   for (const et of empTasks) {
-    // Complementary roles on same flight → overlap allowed
-    if (et.flight === task.flight && et.flight !== 'Рейс не указ.' && et.name !== task.name) continue;
+    // Complementary roles on the same physical aircraft turn (same flight,
+    // same stand, different task name) → overlap allowed for one employee.
+    // Same flight alone isn't enough: two unrelated orders can share a
+    // flight_ref while sitting at completely different stands, which is two
+    // jobs a person can't physically do at once — still a real conflict.
+    if (et.flight === task.flight && et.flight !== 'Рейс не указ.' && et.name !== task.name &&
+        getPosDistance(et.pos, task.pos) === 0) {
+      continue;
+    }
     if (et.start < task.end && task.start < et.end) result.push(et);
   }
   return result;
