@@ -1,8 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space, Modal, Alert, Typography } from 'antd';
 import Plot from 'react-plotly.js';
-import { hasAllQuals } from '../optimizer';
-import { getPosDistance } from '../utils/posDistance';
+import { hasAllQuals, conflictsWith } from '../optimizer';
 
 const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
 
@@ -20,30 +19,19 @@ function fmt(d) {
 }
 
 // Check whether assigning `task` to `employeeName` creates a time conflict.
-// Returns array of conflicting tasks (empty = no conflict). Deliberately not
-// filtered by date: the backlog now spans a 3-day window, and a task can be
-// bucketed under one day's date while its actual time overlaps a task
-// bucketed under the next (a shift/task crossing midnight) — the start/end
-// Date comparison below is what actually matters, not the date label.
-function getConflicts(employeeName, task, tasks) {
+// Returns array of conflicting tasks (empty = no conflict). Uses the exact
+// same conflictsWith the optimizer uses (including the travel-gap check),
+// instead of a separate copy — an earlier duplicate of this logic drifted
+// out of sync with the optimizer's and caused a real double-booking bug.
+// Deliberately not filtered by date: the backlog spans a 3-day window, and
+// a task can be bucketed under one day's date while its actual time
+// overlaps a task bucketed under the next (a shift/task crossing midnight).
+function getConflicts(employeeName, task, tasks, resolver) {
   const empTasks = tasks.filter(t =>
     t.employee === employeeName &&
     t.id !== task.id
   );
-  const result = [];
-  for (const et of empTasks) {
-    // Complementary roles on the same physical aircraft turn (same flight,
-    // same stand, different task name) → overlap allowed for one employee.
-    // Same flight alone isn't enough: two unrelated orders can share a
-    // flight_ref while sitting at completely different stands, which is two
-    // jobs a person can't physically do at once — still a real conflict.
-    if (et.flight === task.flight && et.flight !== 'Рейс не указ.' && et.name !== task.name &&
-        getPosDistance(et.pos, task.pos) === 0) {
-      continue;
-    }
-    if (et.start < task.end && task.start < et.end) result.push(et);
-  }
-  return result;
+  return empTasks.filter(et => conflictsWith(et, task, resolver));
 }
 
 function xAxisCfg(dateObj, nextDay, fontColor, gridColor, showLabels, windowDays) {
@@ -198,7 +186,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark })
   );
 }
 
-export default function BacklogPanel({ tasks, staffList, windowDates, windowStart, windowDays, colorMap, onAssign, isDark }) {
+export default function BacklogPanel({ tasks, staffList, windowDates, windowStart, windowDays, colorMap, onAssign, isDark, distanceResolver }) {
   const [selections, setSelections] = useState({});
   const [conflictInfo, setConflictInfo] = useState(null);
 
@@ -212,7 +200,7 @@ export default function BacklogPanel({ tasks, staffList, windowDates, windowStar
   }
 
   function handleAssignClick(task, sel) {
-    const conflicts = getConflicts(sel, task, tasks);
+    const conflicts = getConflicts(sel, task, tasks, distanceResolver);
     if (conflicts.length === 0) {
       onAssign(task.id, sel, true);
       setSelections(prev => { const n = { ...prev }; delete n[task.id]; return n; });
@@ -223,7 +211,7 @@ export default function BacklogPanel({ tasks, staffList, windowDates, windowStar
         hasAllQuals(s.quals, task) &&
         s.shiftStart <= task.start &&
         task.end <= s.shiftEnd &&
-        getConflicts(s.name, task, tasks).length === 0
+        getConflicts(s.name, task, tasks, distanceResolver).length === 0
       );
       setConflictInfo({ task, sel, conflicts, alternatives });
     }

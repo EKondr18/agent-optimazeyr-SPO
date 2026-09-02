@@ -10,7 +10,9 @@ import {
   UnorderedListOutlined, ClockCircleOutlined, RiseOutlined
 } from '@ant-design/icons';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
+import { createDistanceResolver } from './utils/travelGraph';
 import { runOptimizer, reassignDelayedConflicts } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
@@ -102,10 +104,98 @@ function FileDropzone({ label, isDark, status, onFile }) {
   );
 }
 
+// Same drag-and-drop UX as FileDropzone, but for the two auxiliary
+// location/travel-graph files: these can arrive as .csv, .json, or .xlsx
+// (the real VKO_TRANSPORT export is xlsx), so this always resolves to a
+// parsed array of row objects via onRows, regardless of source format.
+function AuxDataDropzone({ label, isDark, status, onRows }) {
+  const [isOver, setIsOver] = useState(false);
+  const inputRef = useRef();
+
+  function readFile(file) {
+    if (!file) return;
+    const isXlsx = /\.xlsx?$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onerror = () => onRows(file.name, null, 'не удалось прочитать файл');
+    if (isXlsx) {
+      reader.onload = ev => {
+        try {
+          const wb = XLSX.read(ev.target.result, { type: 'array' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+          onRows(file.name, rows, null);
+        } catch (err) {
+          onRows(file.name, null, err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = ev => {
+        try {
+          const text = ev.target.result.trim();
+          const rows = text.startsWith('[') || text.startsWith('{')
+            ? JSON.parse(text)
+            : (() => {
+                const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+                if (parsed.errors.length > 0) throw new Error(parsed.errors[0].message);
+                return parsed.data;
+              })();
+          onRows(file.name, rows, null);
+        } catch (err) {
+          onRows(file.name, null, err.message);
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+      <div
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => { e.preventDefault(); setIsOver(true); }}
+        onDragLeave={() => setIsOver(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setIsOver(false);
+          readFile(e.dataTransfer.files[0]);
+        }}
+        style={{
+          border: `1px dashed ${isOver ? '#1677ff' : (isDark ? '#444' : '#ccc')}`,
+          borderRadius: 6,
+          padding: '6px 8px',
+          textAlign: 'center',
+          fontSize: 11,
+          cursor: 'pointer',
+          background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
+          color: isDark ? '#888' : '#999',
+        }}
+      >
+        {status?.error ? (
+          <span style={{ color: '#ff4d4f' }}>Ошибка: {status.error}</span>
+        ) : status?.filename ? (
+          <span style={{ color: '#52c41a' }}>✓ {status.filename} ({status.rows.length})</span>
+        ) : (
+          'перетащите файл (csv/json/xlsx) или нажмите'
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv,.txt,.json,.xlsx,.xls"
+        onChange={e => { readFile(e.target.files[0]); e.target.value = ''; }}
+        style={{ display: 'none' }}
+      />
+    </div>
+  );
+}
+
 function SidebarContent({
   isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
   manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
+  locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, selectedDate, setSelectedDate, setOptimizerRan,
   handleRunOptimizer, handleResetBacklog,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
@@ -213,6 +303,28 @@ function SidebarContent({
                 </Space>
               </Space>
             ),
+          }, {
+            key: 'locations',
+            label: <span style={{ fontSize: 12 }}>🗺️ Локации и сеть перемещений (опционально)</span>,
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                <AuxDataDropzone
+                  label="tb_location (csv/json)"
+                  isDark={isDark}
+                  status={locationsFile}
+                  onRows={handleLocationsRows}
+                />
+                <AuxDataDropzone
+                  label="VKO_TRANSPORT (xlsx/csv) — граф перемещений"
+                  isDark={isDark}
+                  status={travelGraphFile}
+                  onRows={handleTravelGraphRows}
+                />
+                <Text style={{ fontSize: 11, color: isDark ? '#666' : '#999' }}>
+                  Улучшает расчёт расстояний/времени перехода между стоянками в оптимизаторе. Без этих файлов используется упрощённая эвристика по коду стоянки.
+                </Text>
+              </Space>
+            ),
           }]}
         />
       </div>
@@ -308,10 +420,25 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [manualFiles, setManualFiles] = useState({});
   const [csvFiles, setCsvFiles] = useState({});
+  const [locationsFile, setLocationsFile] = useState(null);
+  const [travelGraphFile, setTravelGraphFile] = useState(null);
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
   const csvAllReady = JSON_FILE_SLOTS.every(s => csvFiles[s.key]?.text && !csvFiles[s.key]?.error);
+
+  // Real physical-distance resolver for the optimizer's travel-time logic —
+  // active as soon as either auxiliary file is loaded (each dataset alone is
+  // still useful: locations without the graph gives same-stand detection,
+  // the graph without locations resolves nothing but is harmless). Falls
+  // back to the plain string heuristic everywhere when neither is loaded.
+  const distanceResolver = useMemo(() => {
+    if (!locationsFile?.rows && !travelGraphFile?.rows) return null;
+    return createDistanceResolver({
+      locations: locationsFile?.rows || [],
+      travelEdges: travelGraphFile?.rows || [],
+    });
+  }, [locationsFile, travelGraphFile]);
 
   useEffect(() => {
     document.body.style.background = isDark ? '#0d0d0d' : '#f5f5f5';
@@ -498,8 +625,16 @@ export default function App() {
     setCsvFiles({});
   }
 
+  function handleLocationsRows(filename, rows, error) {
+    setLocationsFile(error ? { filename, rows: null, error } : { filename, rows, error: null });
+  }
+
+  function handleTravelGraphRows(filename, rows, error) {
+    setTravelGraphFile(error ? { filename, rows: null, error } : { filename, rows, error: null });
+  }
+
   function handleRunOptimizer() {
-    const updated = runOptimizer(tasksDB, staffDB, selectedDate);
+    const updated = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver);
     setTasksDB(updated);
     setOptimizerRan(true);
   }
@@ -526,7 +661,7 @@ export default function App() {
       };
     });
 
-    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds);
+    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds, distanceResolver);
     updated = resolved;
     for (const c of changes) {
       if (c.backlog) {
@@ -536,7 +671,7 @@ export default function App() {
       }
     }
 
-    if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate);
+    if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate, distanceResolver);
     setTasksDB(updated);
   }
 
@@ -558,6 +693,7 @@ export default function App() {
     isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
     manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
+    locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, selectedDate, setSelectedDate, setOptimizerRan,
     handleRunOptimizer, handleResetBacklog,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
@@ -617,6 +753,7 @@ export default function App() {
           colorMap={colorMap}
           onAssign={handleAssign}
           isDark={isDark}
+          distanceResolver={distanceResolver}
         />
       ),
     },

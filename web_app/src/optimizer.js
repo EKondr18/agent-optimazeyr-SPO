@@ -16,17 +16,39 @@ export function hasAllQuals(staffQuals, task) {
   return required.every(q => staffQuals.includes(q));
 }
 
+// True when two POS codes are the same physical stand. Prefers the real
+// travel-network resolver (same graph node) when one is loaded; falls back
+// to the plain string heuristic otherwise.
+function samePosition(pos1, pos2, resolver) {
+  if (resolver) {
+    const m = resolver.metersBetween(pos1, pos2);
+    if (m != null) return m === 0;
+  }
+  return getPosDistance(pos1, pos2) === 0;
+}
+
 // Back-to-back tasks at meaningfully different positions need walking/driving
 // time between them — without it the assignment isn't physically realistic.
-function hasInsufficientGap(a, b) {
+// With a real distance resolver loaded, this compares the actual gap against
+// how long the walk would take (see travelGraph.js's WALK_SPEED_MPS); without
+// one, it falls back to the old fixed distance-units/time-window heuristic.
+function hasInsufficientGap(a, b, resolver) {
   const earlier = a.start <= b.start ? a : b;
   const later = a.start <= b.start ? b : a;
   if (later.start < earlier.end) return false; // overlap is handled by tasksOverlap
-  const gap = later.start - earlier.end;
-  return gap < MIN_TRANSITION_MS && getPosDistance(earlier.pos, later.pos) >= MIN_TRANSITION_POS_DIST;
+  const gapMs = later.start - earlier.end;
+
+  const neededSeconds = resolver ? resolver.secondsBetween(earlier.pos, later.pos) : null;
+  if (neededSeconds != null) {
+    return gapMs < neededSeconds * 1000;
+  }
+  return gapMs < MIN_TRANSITION_MS && getPosDistance(earlier.pos, later.pos) >= MIN_TRANSITION_POS_DIST;
 }
 
-function conflictsWith(a, b) {
+// Exported so BacklogPanel's manual-assignment conflict check uses the exact
+// same rule as the optimizer instead of maintaining its own copy — the two
+// diverging once already caused a real double-booking bug.
+export function conflictsWith(a, b, resolver) {
   // Same flight + same stand + different task name = complementary roles on
   // the same physical aircraft turn → overlap allowed for one employee.
   // Same flight + same task name = 2 identical tasks → need 2 different
@@ -36,14 +58,14 @@ function conflictsWith(a, b) {
   // different stands — that's two jobs a person can't physically do at
   // once, not a complementary pair, so it must still count as a conflict.
   if (a.flight === b.flight && a.flight !== 'Рейс не указ.' && a.name !== b.name &&
-      getPosDistance(a.pos, b.pos) === 0) {
+      samePosition(a.pos, b.pos, resolver)) {
     return false;
   }
-  return tasksOverlap(a, b) || hasInsufficientGap(a, b);
+  return tasksOverlap(a, b) || hasInsufficientGap(a, b, resolver);
 }
 
-function hasConflict(empTasks, newTask) {
-  return empTasks.some(t => conflictsWith(t, newTask));
+function hasConflict(empTasks, newTask, resolver) {
+  return empTasks.some(t => conflictsWith(t, newTask, resolver));
 }
 
 function getLastTaskPos(empTasks, beforeTime) {
@@ -53,13 +75,21 @@ function getLastTaskPos(empTasks, beforeTime) {
   return prior.length > 0 ? prior[0].pos : null;
 }
 
-function scoreEmployee(staff, assignedTasks, task) {
+function scoreEmployee(staff, assignedTasks, task, resolver) {
   const empTasks = assignedTasks[staff.name] || [];
   const lastPos = getLastTaskPos(empTasks, task.start);
   const hasSameFlightDiffTask = empTasks.some(t =>
     t.flight === task.flight && task.flight !== 'Рейс не указ.' && t.name !== task.name
   );
-  const dist = hasSameFlightDiffTask ? 0 : (lastPos ? getPosDistance(lastPos, task.pos) : 10);
+  let dist;
+  if (hasSameFlightDiffTask) {
+    dist = 0;
+  } else if (lastPos) {
+    const meters = resolver ? resolver.metersBetween(lastPos, task.pos) : null;
+    dist = meters != null ? meters : getPosDistance(lastPos, task.pos);
+  } else {
+    dist = 10;
+  }
   return { dist, load: empTasks.length };
 }
 
@@ -77,7 +107,7 @@ function commit(result, assignedTasks, taskId, employeeName) {
 // logic the optimizer uses for unassigned ("Свободно") tasks. Untouched
 // locked tasks (not delayed) are left alone, since their conflicts — if
 // any — were a deliberate dispatcher override (force-assign).
-export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds) {
+export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds, resolver) {
   const result = tasks.map(t => ({ ...t }));
   if (!delayedTaskIds || delayedTaskIds.length === 0) return { tasks: result, changes: [] };
 
@@ -102,7 +132,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
 
     const currentEmp = task.employee;
     const empTasks = (assignedTasks[currentEmp] || []).filter(t => t.id !== task.id);
-    const conflictsWithLocked = empTasks.some(t => t.isLocked && conflictsWith(t, task));
+    const conflictsWithLocked = empTasks.some(t => t.isLocked && conflictsWith(t, task, resolver));
     if (!conflictsWithLocked) continue;
 
     assignedTasks[currentEmp] = empTasks;
@@ -116,8 +146,8 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
       if (s.name === currentEmp) continue;
       if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-      if (hasConflict(assignedTasks[s.name] || [], task)) continue;
-      const score = scoreEmployee(s, assignedTasks, task);
+      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
+      const score = scoreEmployee(s, assignedTasks, task, resolver);
       if (!bestScore || score.load < bestScore.load ||
           (score.load === bestScore.load && score.dist < bestScore.dist)) {
         bestScore = score; bestStaff = s;
@@ -133,7 +163,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
         if (s.name === currentEmp) continue;
         if (!hasAllQuals(s.quals, task)) continue;
         if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
-        if (hasConflict(assignedTasks[s.name] || [], task)) continue;
+        if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
         const load = (assignedTasks[s.name] || []).length;
         if (load < bestLoad) { bestLoad = load; bestStaff = s; }
       }
@@ -154,7 +184,7 @@ export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTa
   return { tasks: result, changes };
 }
 
-export function runOptimizer(tasks, staffDB, selectedDate) {
+export function runOptimizer(tasks, staffDB, selectedDate, resolver) {
   let result = tasks.map(t =>
     t.date === selectedDate && !t.isLocked
       ? { ...t, employee: 'Не назначено' }
@@ -206,8 +236,8 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     for (const s of staff) {
       if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-      if (hasConflict(assignedTasks[s.name] || [], task)) continue;
-      const score = scoreEmployee(s, assignedTasks, task);
+      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
+      const score = scoreEmployee(s, assignedTasks, task, resolver);
       if (!bestScore || score.load < bestScore.load ||
           (score.load === bestScore.load && score.dist < bestScore.dist)) {
         bestScore = score; bestStaff = s;
@@ -233,7 +263,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
       if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
 
       const empTasks = assignedTasks[s.name] || [];
-      const conflicts = empTasks.filter(ct => conflictsWith(ct, task));
+      const conflicts = empTasks.filter(ct => conflictsWith(ct, task, resolver));
 
       if (conflicts.length === 0) {
         commit(result, assignedTasks, task.id, s.name);
@@ -253,7 +283,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
           if (alt.name === s.name) continue;
           if (!hasAllQuals(alt.quals, conflict)) continue;
           if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;
-          if (!hasConflict(tempAssigned[alt.name] || [], conflict)) {
+          if (!hasConflict(tempAssigned[alt.name] || [], conflict, resolver)) {
             migrations.push({ task: conflict, from: s.name, to: alt.name });
             tempAssigned[s.name] = tempAssigned[s.name].filter(t => t.id !== conflict.id);
             if (!tempAssigned[alt.name]) tempAssigned[alt.name] = [];
@@ -290,7 +320,7 @@ export function runOptimizer(tasks, staffDB, selectedDate) {
     for (const s of staff) {
       if (!hasAllQuals(s.quals, task)) continue;
       if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
-      if (hasConflict(assignedTasks[s.name] || [], task)) continue;
+      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
       const load = (assignedTasks[s.name] || []).length;
       if (load < bestLoad) { bestLoad = load; bestStaff = s; }
     }
