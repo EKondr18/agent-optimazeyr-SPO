@@ -82,12 +82,31 @@ export default function GanttChart({
     // How late an employee's day has run relative to how it was originally
     // scheduled — the biggest delay among their tasks (baseStart is the
     // original imported time; start is where it landed after a delay was
-    // applied). Shown as a badge next to their name.
+    // applied). Shown as a badge next to their name. This is a DIFFERENT
+    // thing from overtime below: a task can be delayed and still finish
+    // inside the shift, or never be delayed at all and still run past
+    // shift end — the two badges track separate conditions on purpose.
     const empDelayMinutes = {};
     for (const t of filtered) {
       if (t.baseStart && t.start > t.baseStart) {
         const mins = Math.round((t.start - t.baseStart) / 60000);
         if (mins > 0) empDelayMinutes[t.employee] = Math.max(empDelayMinutes[t.employee] || 0, mins);
+      }
+    }
+
+    // How many minutes past their shift's actual end an employee's day
+    // runs — same "Задержаны после смены" condition MetricsSummary counts,
+    // just surfaced per-employee here instead of only as a total count.
+    const shiftByName = new Map(staffShifts.map(s => [s.name, s]));
+    const empOvertimeMinutes = {};
+    for (const [emp, empTaskList] of Object.entries(
+      filtered.reduce((acc, t) => { (acc[t.employee] ??= []).push(t); return acc; }, {})
+    )) {
+      const shift = shiftByName.get(emp);
+      if (!shift) continue;
+      const latestEnd = new Date(Math.max(...empTaskList.map(t => t.end.getTime())));
+      if (latestEnd > shift.shiftEnd) {
+        empOvertimeMinutes[emp] = Math.round((latestEnd - shift.shiftEnd) / 60000);
       }
     }
 
@@ -122,17 +141,18 @@ export default function GanttChart({
       const isExpanded = hasArrow && expanded.has(emp);
       const startIdx = yRowsTopDown.length;
       const delayMin = empDelayMinutes[emp];
+      const overtimeMin = empOvertimeMinutes[emp];
 
       if (!hasArrow) {
         empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: false, emp, indent: 0, delayMin });
+        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: false, emp, indent: 0, delayMin, overtimeMin });
       } else if (!isExpanded) {
         const label = types.length === 1 ? `${emp} (${types[0]})` : emp;
         empYVal[emp] = emp;
-        yRowsTopDown.push({ yVal: emp, label, isEmployee: true, hasArrow: true, arrowOpen: false, emp, indent: 0, delayMin });
+        yRowsTopDown.push({ yVal: emp, label, isEmployee: true, hasArrow: true, arrowOpen: false, emp, indent: 0, delayMin, overtimeMin });
       } else {
         empYVal[emp] = null; // per-task, resolved via reqType below
-        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: true, emp, indent: 0, delayMin });
+        yRowsTopDown.push({ yVal: emp, label: emp, isEmployee: true, hasArrow: true, arrowOpen: true, emp, indent: 0, delayMin, overtimeMin });
         [...types].reverse().forEach(reqType => {
           yRowsTopDown.push({ yVal: `${emp}${SEP}${reqType}`, label: reqType, isEmployee: false, hasArrow: false, emp, indent: 1 });
         });
@@ -477,6 +497,23 @@ export default function GanttChart({
                     }}
                   >
                     ⏱️+{row.delayMin}
+                  </span>
+                )}
+                {row.overtimeMin > 0 && (
+                  <span
+                    title={`Переработка ~${row.overtimeMin} мин после конца смены (метрика «Задержаны после смены»)`}
+                    style={{
+                      marginLeft: 6,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: '#fff',
+                      background: row.overtimeMin > 30 ? '#ff4d4f' : '#faad14',
+                      borderRadius: 4,
+                      padding: '1px 5px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    🕒+{row.overtimeMin}
                   </span>
                 )}
               </div>
