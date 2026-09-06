@@ -8,7 +8,7 @@ import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
   MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
   UnorderedListOutlined, ClockCircleOutlined, RiseOutlined,
-  TeamOutlined,
+  TeamOutlined, ScheduleOutlined,
 } from '@ant-design/icons';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -511,6 +511,43 @@ export default function App() {
     [tasksDB]
   );
 
+  // Full shift history per employee across every loaded date (not just the
+  // Gantt's 3-day window) — the call-in eligibility rule ("no shift within
+  // 12h before/after") needs to see shifts that can fall outside it.
+  const allShiftsByPerson = useMemo(() => {
+    const map = new Map();
+    for (const list of Object.values(staffDB)) {
+      for (const s of list) {
+        if (!map.has(s.name)) map.set(s.name, []);
+        map.get(s.name).push({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd });
+      }
+    }
+    return map;
+  }, [staffDB]);
+
+  // Strategic planning: a preview of the NEXT day, built by pre-running the
+  // optimizer against that day's own shifts and qualifications ahead of
+  // time. This is a read-only "what-if" (runOptimizer returns fresh clones,
+  // never mutates tasksDB) — the operational charts above still reflect the
+  // actual current assignment, this reflects a plan for a day not lived yet.
+  const futureDate = useMemo(() => (selectedDate ? shiftYMD(selectedDate, 1) : ''), [selectedDate]);
+  const futurePreviewTasks = useMemo(() => {
+    if (!futureDate) return [];
+    return runOptimizer(tasksDB, staffDB, futureDate, distanceResolver, [futureDate]);
+  }, [tasksDB, staffDB, futureDate, distanceResolver]);
+  const futureDayTasks = useMemo(
+    () => futurePreviewTasks.filter(t => t.date === futureDate),
+    [futurePreviewTasks, futureDate]
+  );
+  const futureBacklogTasks = useMemo(
+    () => futureDayTasks.filter(t => t.employee === 'Не назначено'),
+    [futureDayTasks]
+  );
+  const futureScheduledNames = useMemo(
+    () => new Set((staffDB[futureDate] ?? []).map(s => s.name)),
+    [staffDB, futureDate]
+  );
+
   function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
     const types = [...new Set(tasks.map(t => t.name))];
@@ -870,6 +907,7 @@ export default function App() {
             selectedDate={selectedDate}
             selectedTaskTypes={filterTypes}
             isDark={isDark}
+            roster={fullRoster}
           />
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
@@ -878,6 +916,7 @@ export default function App() {
             selectedDate={selectedDate}
             selectedTaskTypes={filterTypes}
             isDark={isDark}
+            roster={fullRoster}
           />
         </div>
       ),
@@ -899,8 +938,58 @@ export default function App() {
           windowDays={GANTT_WINDOW_DAYS}
           fullRoster={fullRoster}
           scheduledNames={scheduledNames}
+          allShiftsByPerson={allShiftsByPerson}
           isDark={isDark}
         />
+      ),
+    },
+    {
+      key: 'strategic',
+      label: (
+        <span style={{ fontWeight: 600 }}>
+          <ScheduleOutlined style={{ marginRight: 8 }} />
+          Стратегическое планирование (сутки {futureDate})
+        </span>
+      ),
+      children: (
+        <div>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Предварительный план на завтра"
+            description="Задачи на этот день ещё не распределены реально — здесь оптимизатор заранее раскидывает их по сменам и квалификациям, чтобы увидеть потребность в людях и нехватку заранее, а не по факту."
+          />
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи (предварительное распределение)</Text>
+          <HourlyLoadChart
+            tasks={futureDayTasks}
+            selectedDate={futureDate}
+            selectedTaskTypes={filterTypes}
+            isDark={isDark}
+            roster={fullRoster}
+          />
+          <Divider style={{ margin: '20px 0' }} />
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
+          <HourlyLoadChart
+            tasks={futureBacklogTasks}
+            selectedDate={futureDate}
+            selectedTaskTypes={filterTypes}
+            isDark={isDark}
+            roster={fullRoster}
+          />
+          <Divider style={{ margin: '20px 0' }} />
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Нехватка персонала и план вызова на подработку</Text>
+          <StaffingGapPanel
+            tasks={futureDayTasks}
+            windowDates={[futureDate]}
+            windowStart={futureDate}
+            windowDays={1}
+            fullRoster={fullRoster}
+            scheduledNames={futureScheduledNames}
+            allShiftsByPerson={allShiftsByPerson}
+            isDark={isDark}
+          />
+        </div>
       ),
     },
   ] : [];

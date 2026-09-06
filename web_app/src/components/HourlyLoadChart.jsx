@@ -1,5 +1,8 @@
 import Plot from 'react-plotly.js';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Segmented } from 'antd';
+import { packIntoChannels, bucketizeChannels, GRANULARITY_OPTIONS } from '../utils/staffDemand';
+import { qualColor } from '../utils/qualColors';
 
 function hexToRgba(hex, alpha) {
   if (!hex || hex[0] !== '#' || hex.length < 7) return hex;
@@ -9,55 +12,31 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// Categorical palette for qualification codes — independent of colorMap
-// (which is keyed by task name), since this chart groups by required
-// qualification instead.
-const QUAL_COLOR_PALETTE = [
-  '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD',
-  '#8C564B', '#E377C2', '#7F7F7F', '#BCBD22', '#17BECF',
-  '#AEC7E8', '#FFBB78', '#98DF8A', '#FF9896', '#C5B0D5',
-];
-function qualColor(qual) {
-  let hash = 0;
-  for (let i = 0; i < qual.length; i++) hash = (hash * 31 + qual.charCodeAt(i)) | 0;
-  return QUAL_COLOR_PALETTE[Math.abs(hash) % QUAL_COLOR_PALETTE.length];
-}
+export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark, roster = [] }) {
+  const [granularity, setGranularity] = useState(60);
 
-export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark }) {
   const { traces } = useMemo(() => {
-    const xLabels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
-    const dateBase = new Date(selectedDate + 'T00:00:00');
-
     const dayTasks = tasks.filter(
       t => t.date === selectedDate && selectedTaskTypes.includes(t.name)
     );
 
-    // Grouped by required qualification (same convention as the rest of the
-    // app — GanttChart's sub-rows, StaffingGapPanel) rather than by task
-    // name: a handful of qualification codes instead of 50+ task-name
-    // variants keeps the legend and hover actually readable.
-    const byQual = {};
-    for (let h = 0; h < 24; h++) {
-      const slotStart = new Date(dateBase.getTime() + h * 3600000);
-      const slotEnd = new Date(slotStart.getTime() + 3600000);
-      for (const t of dayTasks) {
-        if (Math.min(t.end, slotEnd) > Math.max(t.start, slotStart)) {
-          const qual = t.reqType || '(без квалификации)';
-          if (!byQual[qual]) byQual[qual] = Array(24).fill(0);
-          byQual[qual][h]++;
-        }
-      }
-    }
+    // Minimum number of distinct PEOPLE needed to cover dayTasks, not raw
+    // task-overlap count — one person holding several relevant
+    // qualifications can cover more than one task per interval as long as
+    // they don't overlap in time. See utils/staffDemand.js.
+    const channels = packIntoChannels(dayTasks, roster);
+    const buckets = bucketizeChannels(channels, selectedDate, 1, granularity);
 
-    const hourlyReq = Array(24).fill(0);
-    for (const counts of Object.values(byQual)) {
-      for (let h = 0; h < 24; h++) hourlyReq[h] += counts[h];
-    }
+    const xLabels = buckets.map(b => {
+      const h = String(b.start.getHours()).padStart(2, '0');
+      const m = String(b.start.getMinutes()).padStart(2, '0');
+      return `${h}:${m}`;
+    });
 
-    // Sort descending by total count: largest total renders first (at back/bottom of stack)
-    const sortedQuals = Object.keys(byQual).sort((a, b) => {
-      const sumA = byQual[a].reduce((s, v) => s + v, 0);
-      const sumB = byQual[b].reduce((s, v) => s + v, 0);
+    const quals = [...new Set(buckets.flatMap(b => Object.keys(b.byQual)))];
+    const sortedQuals = quals.sort((a, b) => {
+      const sumA = buckets.reduce((s, bk) => s + (bk.byQual[a] || 0), 0);
+      const sumB = buckets.reduce((s, bk) => s + (bk.byQual[b] || 0), 0);
       return sumB - sumA;
     });
 
@@ -73,71 +52,87 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
         fill: 'tozeroy',
         name: qual,
         x: xLabels,
-        // null (not 0) at zero-demand hours so hovermode:'x unified' omits
+        // null (not 0) at zero-demand buckets so hovermode:'x unified' omits
         // this trace from the tooltip there, instead of listing every
-        // qualification with "0" at every hour it isn't actually needed.
-        y: byQual[qual].map(v => (v === 0 ? null : v)),
+        // qualification with "0" at every bucket it isn't actually needed.
+        y: buckets.map(b => (b.byQual[qual] ? b.byQual[qual] : null)),
         line: { color, width: 1.5 },
         fillcolor: hexToRgba(color, 0.55),
-        hovertemplate: `<b>${qual}</b>: %{y}<extra></extra>`,
+        hovertemplate: `<b>${qual}</b>: %{y} чел.<extra></extra>`,
       };
     });
 
+    const totalPeople = buckets.map(b => b.count);
     const reqTrace = {
       type: 'scatter',
       mode: 'lines+markers+text',
-      name: 'Потребность в персонале (чел.)',
+      name: 'Нужно людей одновременно',
       x: xLabels,
-      y: hourlyReq.map(v => (v === 0 ? null : v)),
-      text: hourlyReq.map(v => (v > 0 ? String(v) : '')),
+      y: totalPeople.map(v => (v === 0 ? null : v)),
+      text: totalPeople.map(v => (v > 0 ? String(v) : '')),
       textposition: 'top center',
       textfont: { size: 10, color: fontColor },
       line: { color: isDark ? '#ffffff' : '#111111', width: 2.5, dash: 'dot' },
       marker: { color: isDark ? '#ffffff' : '#111111', size: 6 },
-      hovertemplate: '<b>Потребность (чел.)</b>: %{y}<extra></extra>',
+      hovertemplate: '<b>Нужно людей одновременно</b>: %{y}<extra></extra>',
     };
 
     return { traces: [...areaTraces, reqTrace] };
-  }, [tasks, selectedDate, selectedTaskTypes, isDark]);
+  }, [tasks, selectedDate, selectedTaskTypes, isDark, roster, granularity]);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
   const plotBg = isDark ? '#1a1a2e' : '#F8FAFC';
 
   return (
-    <Plot
-      data={traces}
-      layout={{
-        height: 420,
-        hovermode: 'x unified',
-        margin: { l: 55, r: 20, t: 15, b: 100 },
-        xaxis: {
-          title: { text: 'Время суток', standoff: 10, font: { color: fontColor } },
-          tickangle: -45,
-          tickfont: { size: 11, color: fontColor },
-          gridcolor: gridColor,
-        },
-        yaxis: {
-          title: { text: 'Ресурсы / Задачи в часовом интервале', standoff: 5, font: { color: fontColor } },
-          tickfont: { size: 11, color: fontColor },
-          rangemode: 'tozero',
-          gridcolor: gridColor,
-        },
-        legend: {
-          orientation: 'h',
-          y: -0.35,
-          yanchor: 'top',
-          font: { size: 11, color: fontColor },
-          title: { text: 'Квалификация', font: { color: fontColor } },
-        },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: plotBg,
-        hoverlabel: { font: { size: 12 }, namelength: -1 },
-        font: { color: fontColor },
-      }}
-      config={{ responsive: true, displayModeBar: false }}
-      style={{ width: '100%' }}
-      useResizeHandler
-    />
+    <div>
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, color: fontColor }}>Гранулярность:</span>
+        <Segmented
+          size="small"
+          value={granularity}
+          onChange={setGranularity}
+          options={GRANULARITY_OPTIONS}
+        />
+      </div>
+      <Plot
+        data={traces}
+        layout={{
+          height: 420,
+          hovermode: 'x unified',
+          margin: { l: 55, r: 20, t: 15, b: 100 },
+          xaxis: {
+            title: { text: 'Время суток', standoff: 10, font: { color: fontColor } },
+            tickangle: -45,
+            tickfont: { size: 11, color: fontColor },
+            gridcolor: gridColor,
+            // Finer granularities produce many more category ticks than fit
+            // on screen — cap how many are shown so labels stay readable
+            // regardless of the chosen granularity.
+            nticks: 24,
+          },
+          yaxis: {
+            title: { text: 'Необходимо людей одновременно', standoff: 5, font: { color: fontColor } },
+            tickfont: { size: 11, color: fontColor },
+            rangemode: 'tozero',
+            gridcolor: gridColor,
+          },
+          legend: {
+            orientation: 'h',
+            y: -0.35,
+            yanchor: 'top',
+            font: { size: 11, color: fontColor },
+            title: { text: 'Квалификация', font: { color: fontColor } },
+          },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: plotBg,
+          hoverlabel: { font: { size: 12 }, namelength: -1 },
+          font: { color: fontColor },
+        }}
+        config={{ responsive: true, displayModeBar: false }}
+        style={{ width: '100%' }}
+        useResizeHandler
+      />
+    </div>
   );
 }
