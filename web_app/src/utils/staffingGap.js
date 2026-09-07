@@ -59,11 +59,14 @@ export function computeStaffingGaps({ backlogTasks, windowStart, windowDays, gra
 // for a single 20-minute task — a fresh call-in gets a window this long to
 // fill via reoptimization before anyone new is called in at all.
 const CALLIN_WINDOW_MS = 6 * 3600000;
-// Hard cap on how many people this proposes calling in/extending in one
-// run, purely so a pathological backlog (e.g. a qualification nobody
-// holds) can't spin the reoptimization loop forever.
-const MAX_ACTIONS = 20;
-const MAX_ITERATIONS = 500;
+// Hard cap on how many DISTINCT people this proposes calling in/extending
+// in one run, purely so a pathological backlog (e.g. a qualification
+// nobody holds) can't spin the reoptimization loop forever — repeatedly
+// extending the SAME person for different tasks merges into their one
+// existing action (see below) and doesn't count against this again.
+const MAX_ACTIONS = 40;
+const MAX_ITERATIONS = 1000;
+const TIER_ORDER = ['normal', 'tight', 'forced'];
 
 // Every backlog task is tried against these tiers in order, loosest rule
 // first — the dispatcher wants SOMEONE proposed for every gap, not a
@@ -160,13 +163,29 @@ export function resolveStaffingWithCallIns({
 
     if (picked.type === 'extend') {
       const s = picked.staff;
-      const originalStart = s.shiftStart, originalEnd = s.shiftEnd;
+      const preStart = s.shiftStart, preEnd = s.shiftEnd;
       if (picked.direction === 'end') s.shiftEnd = new Date(Math.max(s.shiftEnd.getTime(), picked.newBound.getTime()));
       else s.shiftStart = new Date(Math.min(s.shiftStart.getTime(), picked.newBound.getTime()));
-      actions.push({
-        type: 'extend', tier: picked.tier, name: s.name, direction: picked.direction,
-        originalStart, originalEnd, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
-      });
+
+      // A later, further-out task can trigger a second extension of the
+      // SAME person — either someone already extended once before, or
+      // someone freshly called in earlier whose engagement window now
+      // needs to stretch too. Either way, widen that one existing action
+      // instead of adding a duplicate row for the same name: the UI keys
+      // rows by name, and two rows sharing a name would misalign the
+      // label column against the chart for everyone after them.
+      const existing = actions.find(a => a.name === s.name);
+      if (existing) {
+        existing.shiftStart = s.shiftStart;
+        existing.shiftEnd = s.shiftEnd;
+        if (TIER_ORDER.indexOf(picked.tier) > TIER_ORDER.indexOf(existing.tier)) existing.tier = picked.tier;
+      } else {
+        actions.push({
+          type: 'extend', tier: picked.tier, name: s.name,
+          originalStart: preStart, originalEnd: preEnd,
+          shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
+        });
+      }
     } else {
       const { candidate } = picked;
       const shiftStart = target.start;

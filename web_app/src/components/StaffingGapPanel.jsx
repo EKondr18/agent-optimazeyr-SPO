@@ -147,9 +147,21 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
                     вызов {fmtT(action.shiftStart)}–{fmtT(action.shiftEnd)}
                   </Tag>
                 ) : (
-                  <Tag color={TIER_INFO[action.tier]?.color || 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
-                    +{fmtHours(Math.abs((action.direction === 'end' ? action.shiftEnd - action.originalEnd : action.originalStart - action.shiftStart)))}ч {action.direction === 'end' ? 'позже' : 'раньше'}
-                  </Tag>
+                  // A repeatedly-extended person can end up stretched on
+                  // both ends across separate tasks — show whichever
+                  // side(s) actually moved instead of assuming just one.
+                  <>
+                    {action.shiftEnd > action.originalEnd && (
+                      <Tag color={TIER_INFO[action.tier]?.color || 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                        +{fmtHours(action.shiftEnd - action.originalEnd)}ч позже
+                      </Tag>
+                    )}
+                    {action.shiftStart < action.originalStart && (
+                      <Tag color={TIER_INFO[action.tier]?.color || 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                        +{fmtHours(action.originalStart - action.shiftStart)}ч раньше
+                      </Tag>
+                    )}
+                  </>
                 )}
                 {TIER_INFO[action.tier]?.label && (
                   <Tag color={TIER_INFO[action.tier].color} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
