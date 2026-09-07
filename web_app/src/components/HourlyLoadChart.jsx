@@ -1,5 +1,5 @@
 import Plot from 'react-plotly.js';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { Segmented } from 'antd';
 import { packIntoChannels, bucketizeChannels, GRANULARITY_OPTIONS } from '../utils/staffDemand';
 import { qualColor } from '../utils/qualColors';
@@ -15,7 +15,7 @@ function hexToRgba(hex, alpha) {
 export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark, roster = [] }) {
   const [granularity, setGranularity] = useState(60);
 
-  const { traces } = useMemo(() => {
+  const { traces, bucketCount } = useMemo(() => {
     const dayTasks = tasks.filter(
       t => t.date === selectedDate && selectedTaskTypes.includes(t.name)
     );
@@ -77,15 +77,42 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
       hovertemplate: '<b>Нужно людей одновременно</b>: %{y}<extra></extra>',
     };
 
-    return { traces: [...areaTraces, reqTrace] };
+    return { traces: [...areaTraces, reqTrace], bucketCount: buckets.length };
   }, [tasks, selectedDate, selectedTaskTypes, isDark, roster, granularity]);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
   const plotBg = isDark ? '#1a1a2e' : '#F8FAFC';
 
+  // Fine granularities (5/15 min) produce far more points than a fixed-width
+  // chart can space out without them running together, so the plot needs
+  // real width per point and a horizontally-scrolling wrapper. We size the
+  // plot ourselves with an explicit pixel width/height (via ResizeObserver
+  // on a sibling that never itself changes size) instead of leaning on
+  // Plotly's own `responsive` auto-resize: that path only re-measures on
+  // the browser's `window` resize event, so a CSS width change on our own
+  // wrapper never reaches it, and forcing a re-measure with a synthetic
+  // resize event was observed to sometimes catch Plotly mid-measure and
+  // lock its SVG at a transient 0 height. Explicit numbers sidestep both
+  // problems entirely.
+  const containerRef = useRef(null);
+  const [containerWidth, setContainerWidth] = useState(900);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const obs = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect?.width;
+      if (w) setContainerWidth(w);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const PX_PER_BUCKET = 26;
+  const plotWidth = Math.max(containerWidth, bucketCount * PX_PER_BUCKET);
+
   return (
-    <div>
+    <div ref={containerRef}>
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 12, color: fontColor }}>Гранулярность:</span>
         <Segmented
@@ -95,44 +122,43 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
           options={GRANULARITY_OPTIONS}
         />
       </div>
-      <Plot
-        data={traces}
-        layout={{
-          height: 420,
-          hovermode: 'x unified',
-          margin: { l: 55, r: 20, t: 15, b: 100 },
-          xaxis: {
-            title: { text: 'Время суток', standoff: 10, font: { color: fontColor } },
-            tickangle: -45,
-            tickfont: { size: 11, color: fontColor },
-            gridcolor: gridColor,
-            // Finer granularities produce many more category ticks than fit
-            // on screen — cap how many are shown so labels stay readable
-            // regardless of the chosen granularity.
-            nticks: 24,
-          },
-          yaxis: {
-            title: { text: 'Необходимо людей одновременно', standoff: 5, font: { color: fontColor } },
-            tickfont: { size: 11, color: fontColor },
-            rangemode: 'tozero',
-            gridcolor: gridColor,
-          },
-          legend: {
-            orientation: 'h',
-            y: -0.35,
-            yanchor: 'top',
-            font: { size: 11, color: fontColor },
-            title: { text: 'Квалификация', font: { color: fontColor } },
-          },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: plotBg,
-          hoverlabel: { font: { size: 12 }, namelength: -1 },
-          font: { color: fontColor },
-        }}
-        config={{ responsive: true, displayModeBar: false }}
-        style={{ width: '100%' }}
-        useResizeHandler
-      />
+      <div style={{ overflowX: 'auto' }}>
+        <Plot
+          data={traces}
+          layout={{
+            width: plotWidth,
+            height: 420,
+            autosize: false,
+            hovermode: 'x unified',
+            margin: { l: 55, r: 20, t: 15, b: 100 },
+            xaxis: {
+              title: { text: 'Время суток', standoff: 10, font: { color: fontColor } },
+              tickangle: -45,
+              tickfont: { size: 11, color: fontColor },
+              gridcolor: gridColor,
+              nticks: Math.min(bucketCount, 96),
+            },
+            yaxis: {
+              title: { text: 'Необходимо людей одновременно', standoff: 5, font: { color: fontColor } },
+              tickfont: { size: 11, color: fontColor },
+              rangemode: 'tozero',
+              gridcolor: gridColor,
+            },
+            legend: {
+              orientation: 'h',
+              y: -0.35,
+              yanchor: 'top',
+              font: { size: 11, color: fontColor },
+              title: { text: 'Квалификация', font: { color: fontColor } },
+            },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: plotBg,
+            hoverlabel: { font: { size: 12 }, namelength: -1 },
+            font: { color: fontColor },
+          }}
+          config={{ responsive: false, displayModeBar: false }}
+        />
+      </div>
     </div>
   );
 }

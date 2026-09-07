@@ -499,13 +499,6 @@ export default function App() {
     [tasksDB]
   );
   const backlogCount = ganttTasks.filter(t => t.employee === 'Не назначено').length;
-  // Anyone with a shift anywhere in the window counts as "already
-  // scheduled" for staffing-gap purposes — a call-in candidate must be off
-  // in the whole 3-day window, not just the exact selected date.
-  const scheduledNames = useMemo(
-    () => new Set(ganttStaff.map(s => s.name)),
-    [ganttStaff]
-  );
   const backlogTasksAll = useMemo(
     () => tasksDB.filter(t => t.employee === 'Не назначено'),
     [tasksDB]
@@ -542,10 +535,6 @@ export default function App() {
   const futureBacklogTasks = useMemo(
     () => futureDayTasks.filter(t => t.employee === 'Не назначено'),
     [futureDayTasks]
-  );
-  const futureScheduledNames = useMemo(
-    () => new Set((staffDB[futureDate] ?? []).map(s => s.name)),
-    [staffDB, futureDate]
   );
 
   function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
@@ -933,12 +922,14 @@ export default function App() {
       children: (
         <StaffingGapPanel
           tasks={tasksDB}
+          staffDB={staffDB}
+          targetDate={selectedDate}
           windowDates={windowDates}
           windowStart={windowDates[0]}
           windowDays={GANTT_WINDOW_DAYS}
           fullRoster={fullRoster}
-          scheduledNames={scheduledNames}
           allShiftsByPerson={allShiftsByPerson}
+          distanceResolver={distanceResolver}
           isDark={isDark}
         />
       ),
@@ -981,12 +972,14 @@ export default function App() {
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Нехватка персонала и план вызова на подработку</Text>
           <StaffingGapPanel
             tasks={futureDayTasks}
+            staffDB={staffDB}
+            targetDate={futureDate}
             windowDates={[futureDate]}
             windowStart={futureDate}
             windowDays={1}
             fullRoster={fullRoster}
-            scheduledNames={futureScheduledNames}
             allShiftsByPerson={allShiftsByPerson}
+            distanceResolver={distanceResolver}
             isDark={isDark}
           />
         </div>
