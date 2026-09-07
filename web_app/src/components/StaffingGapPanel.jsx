@@ -207,6 +207,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
 export default function StaffingGapPanel({
   tasks, staffDB, targetDate, windowDates, windowStart, windowDays,
   fullRoster, allShiftsByPerson, distanceResolver, isDark,
+  resolution: providedResolution,
 }) {
   const [granularity, setGranularity] = useState(60);
 
@@ -224,13 +225,17 @@ export default function StaffingGapPanel({
   // off-duty roster employee for a 6h window — re-running the optimizer
   // after each addition so the whole day/window gets reshuffled, not just
   // the literal backlog task that triggered the proposal. See
-  // utils/staffingGap.js.
-  const resolution = useMemo(() => {
-    if (!targetDate || !staffDB) return null;
+  // utils/staffingGap.js. A caller that already computed this itself (the
+  // strategic-planning tab, so its headline charts can reuse the same
+  // result instead of resolving twice) passes it in via `resolution` —
+  // this only computes its own when that's absent.
+  const computedResolution = useMemo(() => {
+    if (providedResolution || !targetDate || !staffDB) return null;
     return resolveStaffingWithCallIns({
       tasksDB: tasks, staffDB, targetDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver,
     });
-  }, [tasks, staffDB, targetDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver]);
+  }, [providedResolution, tasks, staffDB, targetDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver]);
+  const resolution = providedResolution ?? computedResolution;
 
   if (backlogTasks.length === 0) {
     return <Empty description="Бэклог пуст — нехватки персонала нет" image={Empty.PRESENTED_IMAGE_SIMPLE} />;

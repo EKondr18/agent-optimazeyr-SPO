@@ -14,6 +14,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
+import { resolveStaffingWithCallIns } from './utils/staffingGap';
 import { runOptimizer, reassignDelayedConflicts, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
@@ -519,23 +520,46 @@ export default function App() {
   }, [staffDB]);
 
   // Strategic planning: a preview of the NEXT day, built by pre-running the
-  // optimizer against that day's own shifts and qualifications ahead of
-  // time. This is a read-only "what-if" (runOptimizer returns fresh clones,
-  // never mutates tasksDB) — the operational charts above still reflect the
-  // actual current assignment, this reflects a plan for a day not lived yet.
+  // optimizer against that day's own shifts and qualifications, THEN
+  // applying the same call-in/shift-extension resolution the staffing-gap
+  // panel uses — a strategic plan should already show a fully-staffed day
+  // wherever that's achievable at all, not a raw backlog the dispatcher
+  // still has to go solve by hand a day in advance. This is a read-only
+  // "what-if" (runOptimizer returns fresh clones, never mutates tasksDB) —
+  // the operational charts above still reflect the actual current
+  // assignment, this reflects a plan for a day not lived yet.
   const futureDate = useMemo(() => (selectedDate ? shiftYMD(selectedDate, 1) : ''), [selectedDate]);
+  // The plain optimizer run (existing shifts only) — fed to StaffingGapPanel
+  // so its "нужно ещё N чел" interval list still reflects the RAW demand
+  // that made a call-in plan necessary in the first place, not the already
+  // fixed-up result.
   const futurePreviewTasks = useMemo(() => {
     if (!futureDate) return [];
     return runOptimizer(tasksDB, staffDB, futureDate, distanceResolver, [futureDate]);
   }, [tasksDB, staffDB, futureDate, distanceResolver]);
-  const futureDayTasks = useMemo(
+  const futureDayTasksRaw = useMemo(
     () => futurePreviewTasks.filter(t => t.date === futureDate),
     [futurePreviewTasks, futureDate]
   );
-  const futureBacklogTasks = useMemo(
-    () => futureDayTasks.filter(t => t.employee === 'Не назначено'),
-    [futureDayTasks]
+  // The same day, but with the call-in/extension plan already applied —
+  // this is what "tomorrow" should actually look like once the plan below
+  // is accepted, so the headline charts show a (near-)fully-staffed day
+  // instead of a raw backlog.
+  const futureResolution = useMemo(() => {
+    if (!futureDate) return null;
+    return resolveStaffingWithCallIns({
+      tasksDB, staffDB, targetDate: futureDate, windowDates: [futureDate],
+      fullRoster, allShiftsByPerson, distanceResolver,
+    });
+  }, [tasksDB, staffDB, futureDate, fullRoster, allShiftsByPerson, distanceResolver]);
+  const futureDayTasks = useMemo(
+    () => (futureResolution ? futureResolution.tasks.filter(t => t.date === futureDate) : []),
+    [futureResolution, futureDate]
   );
+  // What's left even after call-ins/extensions — should be empty unless
+  // nobody in the loaded data holds a given qualification at all (see
+  // resolveStaffingWithCallIns).
+  const futureBacklogTasks = futureResolution?.unresolved ?? [];
 
   function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
@@ -949,9 +973,18 @@ export default function App() {
             showIcon
             style={{ marginBottom: 16 }}
             message="Предварительный план на завтра"
-            description="Задачи на этот день ещё не распределены реально — здесь оптимизатор заранее раскидывает их по сменам и квалификациям, чтобы увидеть потребность в людях и нехватку заранее, а не по факту."
+            description="Задачи на этот день ещё не распределены реально — оптимизатор заранее раскидывает их по сменам и квалификациям, а всё, что не закрылось имеющимися сменами, дополнительно закрывается планом вызова/продления смен ниже. Поэтому по итогу здесь не должно оставаться нераспределённых задач, кроме тех, где вообще ни у кого нет нужной квалификации — такие показаны отдельно и промаркированы, за счёт кого и на каких условиях распределено остальное."
           />
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи (предварительное распределение)</Text>
+          {futureResolution && futureResolution.actions.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`Задействовано ${futureResolution.actions.length} доп. чел. (вызов/продление смены)`}
+              description="Без них часть задач ниже осталась бы в бэклоге — состав и условия по каждому смотрите в «Нехватка персонала и план вызова» ниже."
+            />
+          )}
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи (с учётом плана вызова)</Text>
           <HourlyLoadChart
             tasks={futureDayTasks}
             selectedDate={futureDate}
@@ -960,7 +993,9 @@ export default function App() {
             roster={fullRoster}
           />
           <Divider style={{ margin: '20px 0' }} />
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>
+            Осталось нераспределено (даже с учётом вызова/продления смен)
+          </Text>
           <HourlyLoadChart
             tasks={futureBacklogTasks}
             selectedDate={futureDate}
@@ -971,7 +1006,8 @@ export default function App() {
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Нехватка персонала и план вызова на подработку</Text>
           <StaffingGapPanel
-            tasks={futureDayTasks}
+            tasks={futureDayTasksRaw}
+            resolution={futureResolution}
             staffDB={staffDB}
             targetDate={futureDate}
             windowDates={[futureDate]}
