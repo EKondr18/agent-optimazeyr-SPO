@@ -204,11 +204,11 @@ export default function StaffingGapPanel({
   }), [backlogTasks, windowStart, windowDays, granularity]);
 
   // Builds the actual proposal: extend an already-scheduled shift by up to
-  // 2h where possible (the only way to reach shift-only, e.g. aircraft-type,
-  // qualifications), otherwise call in an off-duty roster employee for a 6h
-  // window — re-running the optimizer after each addition so the whole
-  // day/window gets reshuffled, not just the literal backlog task that
-  // triggered the proposal. See utils/staffingGap.js.
+  // 2h where possible (cheaper than a fresh call-in), otherwise call in an
+  // off-duty roster employee for a 6h window — re-running the optimizer
+  // after each addition so the whole day/window gets reshuffled, not just
+  // the literal backlog task that triggered the proposal. See
+  // utils/staffingGap.js.
   const resolution = useMemo(() => {
     if (!targetDate || !staffDB) return null;
     return resolveStaffingWithCallIns({
@@ -275,11 +275,11 @@ export default function StaffingGapPanel({
             План вызова на подработку {resolution.actions.length > 0 && `(${resolution.actions.length} чел.)`}
           </Text>
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            Сначала предлагаем продлить кому-то уже идущую смену (до 2 ч. раньше/позже — так дотягиваемся
-            и до допусков, которые есть только у смены, например по типу ВС), и только если это невозможно —
-            вызвать свободного человека на 6-часовое окно. После каждого добавления пересчитываем
-            распределение по всем задачам дня — освободившиеся у других задачи тоже могут перейти
-            вызванному, поэтому реально нужных людей может быть меньше, чем кажется по одному бэклогу.
+            Сначала предлагаем продлить кому-то уже идущую смену (до 2 ч. раньше/позже — это дешевле,
+            чем вызывать нового человека), и только если это невозможно — вызвать свободного человека
+            на 6-часовое окно. После каждого добавления пересчитываем распределение по всем задачам дня —
+            освободившиеся у других задачи тоже могут перейти вызванному, поэтому реально нужных людей
+            может быть меньше, чем кажется по одному бэклогу.
           </Text>
           {resolution.actions.length > 0 ? (
             <CallInGantt
@@ -304,9 +304,11 @@ export default function StaffingGapPanel({
                 ))}
               </ul>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Для квалификаций по типу ВС это не всегда означает, что реально некого позвать — такие
-                допуски фиксируются в системе только на уровне конкретной смены, поэтому продлить
-                можно только чью-то уже существующую смену этого дня, а не вызвать нового человека с нуля.
+                Это значит, что среди загруженных данных нет ни одного человека — ни на смене, ни в
+                полном ростере — у кого есть эта квалификация (личная или по смене) без конфликта по
+                времени. Полнота результата зависит от того, насколько полно загружена
+                tb_relation_resource_qualification: в неё могут входить и квалификации по типу ВС, если
+                они есть у сотрудника лично, а не только через смену.
               </Text>
             </div>
           )}

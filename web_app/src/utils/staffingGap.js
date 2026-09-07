@@ -64,10 +64,15 @@ const CALLIN_WINDOW_MS = 6 * 3600000;
 // corporate rule this mirrors.
 const CALLIN_BUFFER_MS = 12 * 3600000;
 // An already-scheduled employee's shift can be stretched by at most this
-// much on either end to reach a nearby task — this is the ONLY path to
-// aircraft-type qualifications, which live exclusively on the shift
-// instance (tb_relation_shift_qualification), never on the personal
-// roster — a fresh call-in's `quals` can never include them.
+// much on either end to reach a nearby task — tried before a fresh call-in
+// because it's the cheaper fix (nobody new has to travel in). Qualification
+// coverage is the same union parseShifts already builds for the shift
+// (personal quals ∪ this shift instance's own quals) — a person's personal
+// roster CAN include aircraft-type quals (confirmed against a real
+// tb_relation_resource_qualification export with 3400+ rows, many of them
+// aircraft types tied directly to a resource_ref); the bundled demo dataset
+// just happens to be a smaller/older export where personal quals never do,
+// which is a property of that dataset, not a rule this code assumes.
 const SHIFT_EXTEND_MS = 2 * 3600000;
 // Hard cap on how many people this proposes calling in/extending in one
 // run, purely so a pathological backlog (e.g. a qualification nobody
@@ -114,8 +119,9 @@ export function resolveStaffingWithCallIns({
     const target = backlog[0];
     if (!target) break;
 
-    // 1) Try extending an already-scheduled person's shift — the only way
-    //    to reach shift-only (aircraft-type) qualifications.
+    // 1) Try extending an already-scheduled person's shift first — cheaper
+    //    than bringing in someone new, and their `quals` already covers
+    //    both personal and shift-instance qualifications (see parseShifts).
     let picked = null;
     for (const s of workingStaff) {
       if (!hasAllQuals(s.quals, target)) continue;
