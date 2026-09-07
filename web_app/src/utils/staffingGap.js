@@ -59,37 +59,67 @@ export function computeStaffingGaps({ backlogTasks, windowStart, windowDays, gra
 // for a single 20-minute task — a fresh call-in gets a window this long to
 // fill via reoptimization before anyone new is called in at all.
 const CALLIN_WINDOW_MS = 6 * 3600000;
-// An employee can be freshly called in only if they have no shift starting
-// or ending within this many hours of the gap on either side, per the
-// corporate rule this mirrors.
-const CALLIN_BUFFER_MS = 12 * 3600000;
-// An already-scheduled employee's shift can be stretched by at most this
-// much on either end to reach a nearby task — tried before a fresh call-in
-// because it's the cheaper fix (nobody new has to travel in). Qualification
-// coverage is the same union parseShifts already builds for the shift
-// (personal quals ∪ this shift instance's own quals) — a person's personal
-// roster CAN include aircraft-type quals (confirmed against a real
-// tb_relation_resource_qualification export with 3400+ rows, many of them
-// aircraft types tied directly to a resource_ref); the bundled demo dataset
-// just happens to be a smaller/older export where personal quals never do,
-// which is a property of that dataset, not a rule this code assumes.
-const SHIFT_EXTEND_MS = 2 * 3600000;
 // Hard cap on how many people this proposes calling in/extending in one
 // run, purely so a pathological backlog (e.g. a qualification nobody
 // holds) can't spin the reoptimization loop forever.
 const MAX_ACTIONS = 20;
 const MAX_ITERATIONS = 500;
 
-function isEligibleForCallIn(person, gapStart, gapEnd, allShiftsByPerson) {
+// Every backlog task is tried against these tiers in order, loosest rule
+// first — the dispatcher wants SOMEONE proposed for every gap, not a
+// polite "nobody found", but the relaxation is bounded and labeled rather
+// than unconditional: it only loosens (a) how far a shift can be
+// stretched and (b) how much rest a fresh call-in needs before/after,
+// never the two things that must never bend — a real qualification match
+// (hasAllQuals) and no actual time overlap with that person's own other
+// commitments (no double-booking). "forced" picks are exactly the ones a
+// dispatcher should sanity-check before accepting.
+const RELAX_TIERS = [
+  { tier: 'normal', extendMs: 2 * 3600000, bufferMs: 12 * 3600000 },
+  { tier: 'tight', extendMs: 4 * 3600000, bufferMs: 4 * 3600000 },
+  { tier: 'forced', extendMs: 8 * 3600000, bufferMs: 0 },
+];
+
+function isEligibleForCallIn(person, gapStart, gapEnd, allShiftsByPerson, bufferMs) {
   const shifts = allShiftsByPerson?.get(person.name) || [];
-  const bufferedStart = new Date(gapStart.getTime() - CALLIN_BUFFER_MS);
-  const bufferedEnd = new Date(gapEnd.getTime() + CALLIN_BUFFER_MS);
+  const bufferedStart = new Date(gapStart.getTime() - bufferMs);
+  const bufferedEnd = new Date(gapEnd.getTime() + bufferMs);
+  // bufferMs can be 0 (the "forced" tier) — even then, an actual time
+  // overlap with another shift of theirs still disqualifies them; only the
+  // rest-buffer around it is what gets relaxed away tier by tier.
   return shifts.every(s => !(s.shiftStart < bufferedEnd && s.shiftEnd > bufferedStart));
 }
 
+// Finds the best available way to cover `target`, trying RELAX_TIERS in
+// order and returning the first (tier, action) that works, or null if no
+// tier can find anyone — which only happens when truly nobody in
+// `workingStaff` ∪ `fullRoster` holds the required qualification at all.
+function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson) {
+  for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
+    for (const s of workingStaff) {
+      if (!hasAllQuals(s.quals, target)) continue;
+      const gapAfterShift = target.start - s.shiftEnd;
+      const gapBeforeShift = s.shiftStart - target.end;
+      if (gapAfterShift >= 0 && gapAfterShift <= extendMs) {
+        return { type: 'extend', tier, staff: s, direction: 'end', newBound: target.end };
+      }
+      if (gapBeforeShift >= 0 && gapBeforeShift <= extendMs) {
+        return { type: 'extend', tier, staff: s, direction: 'start', newBound: target.start };
+      }
+    }
+    const candidate = fullRoster.find(p =>
+      !usedNames.has(p.name) &&
+      hasAllQuals(p.quals, target) &&
+      isEligibleForCallIn(p, target.start, target.end, allShiftsByPerson, bufferMs)
+    );
+    if (candidate) return { type: 'callin', tier, candidate };
+  }
+  return null;
+}
+
 // Builds a plan to resolve `targetDate`'s backlog by proposing, one at a
-// time, either (a) extending an already-scheduled employee's shift by up
-// to 2h to reach a nearby task with their existing (possibly aircraft-type)
+// time, either (a) extending an already-scheduled employee's shift to
+// reach a nearby task with their existing (possibly aircraft-type)
 // qualifications, or (b) freshly calling in an off-duty roster employee for
 // a 6h window — and after EACH addition, actually re-running the optimizer
 // for the whole date/window so already-assigned tasks can be reshuffled
@@ -97,6 +127,12 @@ function isEligibleForCallIn(person, gapStart, gapEnd, allShiftsByPerson) {
 // task that triggered it: once they're a real resource for that window,
 // the normal optimizer passes pack their whole day, freeing up whoever was
 // covering nearby tasks before.
+//
+// Every gap is tried at increasingly relaxed RELAX_TIERS before being
+// accepted as truly unresolved, so `unresolved` in the result should only
+// ever contain tasks nobody anywhere (on shift or in the full roster)
+// actually holds the qualification for — not ones that merely didn't fit
+// the tidy 2h/12h defaults.
 //
 // Greedy and bounded (MAX_ACTIONS/MAX_ITERATIONS) — a proposal for the
 // dispatcher to review and accept, not a guaranteed-minimum solve.
@@ -119,35 +155,7 @@ export function resolveStaffingWithCallIns({
     const target = backlog[0];
     if (!target) break;
 
-    // 1) Try extending an already-scheduled person's shift first — cheaper
-    //    than bringing in someone new, and their `quals` already covers
-    //    both personal and shift-instance qualifications (see parseShifts).
-    let picked = null;
-    for (const s of workingStaff) {
-      if (!hasAllQuals(s.quals, target)) continue;
-      const gapAfterShift = target.start - s.shiftEnd;
-      const gapBeforeShift = s.shiftStart - target.end;
-      if (gapAfterShift >= 0 && gapAfterShift <= SHIFT_EXTEND_MS) {
-        picked = { type: 'extend', staff: s, direction: 'end', newBound: target.end };
-        break;
-      }
-      if (gapBeforeShift >= 0 && gapBeforeShift <= SHIFT_EXTEND_MS) {
-        picked = { type: 'extend', staff: s, direction: 'start', newBound: target.start };
-        break;
-      }
-    }
-
-    // 2) Otherwise, a fresh call-in from the personal roster, fully off
-    //    within the 12h buffer.
-    if (!picked) {
-      const candidate = fullRoster.find(p =>
-        !usedNames.has(p.name) &&
-        hasAllQuals(p.quals, target) &&
-        isEligibleForCallIn(p, target.start, target.end, allShiftsByPerson)
-      );
-      if (candidate) picked = { type: 'callin', candidate };
-    }
-
+    const picked = findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson);
     if (!picked) { skipIds.add(target.id); continue; }
 
     if (picked.type === 'extend') {
@@ -156,7 +164,7 @@ export function resolveStaffingWithCallIns({
       if (picked.direction === 'end') s.shiftEnd = new Date(Math.max(s.shiftEnd.getTime(), picked.newBound.getTime()));
       else s.shiftStart = new Date(Math.min(s.shiftStart.getTime(), picked.newBound.getTime()));
       actions.push({
-        type: 'extend', name: s.name, direction: picked.direction,
+        type: 'extend', tier: picked.tier, name: s.name, direction: picked.direction,
         originalStart, originalEnd, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
       });
     } else {
@@ -166,7 +174,7 @@ export function resolveStaffingWithCallIns({
       const newStaff = { name: candidate.name, quals: candidate.quals, shiftStart, shiftEnd, basePos: null };
       workingStaff.push(newStaff);
       usedNames.add(candidate.name);
-      actions.push({ type: 'callin', name: candidate.name, shiftStart, shiftEnd });
+      actions.push({ type: 'callin', tier: picked.tier, name: candidate.name, shiftStart, shiftEnd });
     }
 
     currentStaffDB = { ...staffDB, [targetDate]: workingStaff };

@@ -21,6 +21,17 @@ function fmtHours(ms) {
   return Number.isInteger(h) ? `${h}` : h.toFixed(1);
 }
 
+// Every proposal is tagged with which RELAX_TIERS level found it (see
+// utils/staffingGap.js) — "normal" fits the tidy 2h/12h defaults, "tight"
+// and "forced" mean the rules had to bend to guarantee someone is proposed
+// at all, and the color/label makes that visible so the dispatcher knows
+// which picks to double-check rather than accept blindly.
+const TIER_INFO = {
+  normal: { color: null, label: '' },
+  tight: { color: 'orange', label: 'сжато' },
+  forced: { color: 'red', label: 'крайний случай' },
+};
+
 // Tasks to actually show for one proposed action: a fresh call-in shows
 // their whole engagement window; an extended shift shows only the tasks
 // that landed in the newly-added time (before/after their original shift)
@@ -132,12 +143,17 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
               >
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{action.name}</span>
                 {action.type === 'callin' ? (
-                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                  <Tag color={TIER_INFO[action.tier]?.color || 'blue'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
                     вызов {fmtT(action.shiftStart)}–{fmtT(action.shiftEnd)}
                   </Tag>
                 ) : (
-                  <Tag color="purple" style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                  <Tag color={TIER_INFO[action.tier]?.color || 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
                     +{fmtHours(Math.abs((action.direction === 'end' ? action.shiftEnd - action.originalEnd : action.originalStart - action.shiftStart)))}ч {action.direction === 'end' ? 'позже' : 'раньше'}
+                  </Tag>
+                )}
+                {TIER_INFO[action.tier]?.label && (
+                  <Tag color={TIER_INFO[action.tier].color} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                    {TIER_INFO[action.tier].label}
                   </Tag>
                 )}
               </div>
@@ -275,11 +291,16 @@ export default function StaffingGapPanel({
             План вызова на подработку {resolution.actions.length > 0 && `(${resolution.actions.length} чел.)`}
           </Text>
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            Сначала предлагаем продлить кому-то уже идущую смену (до 2 ч. раньше/позже — это дешевле,
-            чем вызывать нового человека), и только если это невозможно — вызвать свободного человека
-            на 6-часовое окно. После каждого добавления пересчитываем распределение по всем задачам дня —
-            освободившиеся у других задачи тоже могут перейти вызванному, поэтому реально нужных людей
-            может быть меньше, чем кажется по одному бэклогу.
+            Сначала предлагаем продлить кому-то уже идущую смену (это дешевле, чем вызывать нового
+            человека), и только если это невозможно — вызвать свободного человека. Правила по умолчанию:
+            продление до 2 ч., у свежего вызова — минимум 12 ч. отдыха от других смен. Если так никого
+            не находится, требования постепенно смягчаются (до 4 ч. продления/4 ч. отдыха, затем до 8 ч./
+            без требования к отдыху — только без реального пересечения по времени) — так что кто-то
+            предлагается почти всегда, а не только когда идеально подходит по умолчаниям; такие
+            «сжатые» и «крайние» варианты помечены отдельным цветом — их стоит перепроверить вручную.
+            После каждого добавления пересчитываем распределение по всем задачам дня — освободившиеся у
+            других задачи тоже могут перейти вызванному, поэтому реально нужных людей может быть меньше,
+            чем кажется по одному бэклогу.
           </Text>
           {resolution.actions.length > 0 ? (
             <CallInGantt
@@ -296,7 +317,7 @@ export default function StaffingGapPanel({
           {Object.keys(unresolvedByQual).length > 0 && (
             <div style={{ marginTop: 12 }}>
               <Text type="warning" style={{ fontSize: 12 }}>
-                Не удалось закрыть даже вызовом на подработку:
+                Не удалось закрыть даже с учётом смягчённых правил вызова:
               </Text>
               <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
                 {Object.entries(unresolvedByQual).map(([qual, list]) => (
@@ -304,11 +325,11 @@ export default function StaffingGapPanel({
                 ))}
               </ul>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Это значит, что среди загруженных данных нет ни одного человека — ни на смене, ни в
-                полном ростере — у кого есть эта квалификация (личная или по смене) без конфликта по
-                времени. Полнота результата зависит от того, насколько полно загружена
-                tb_relation_resource_qualification: в неё могут входить и квалификации по типу ВС, если
-                они есть у сотрудника лично, а не только через смену.
+                Это значит, что абсолютно ни у кого в загруженных данных — ни на смене, ни в полном
+                ростере, даже без требований к отдыху — нет этой квалификации без реального пересечения
+                по времени с чем-то ещё. Правило качества данных сюда не отменяется: если
+                tb_relation_resource_qualification загружена не полностью, кандидат может существовать
+                в реальности, просто его квалификация не попала в загруженный набор.
               </Text>
             </div>
           )}
