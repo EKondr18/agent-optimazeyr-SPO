@@ -174,100 +174,24 @@ function mergeStaffWindow(staffDB, dates) {
   return [...map.values()];
 }
 
-// A delay just shifted some tasks' times. If a delayed task is locked to an
-// employee and now overlaps another locked task of that same employee, the
-// dispatcher's manual pin can no longer be honoured as-is — relocate the
-// delayed task to a different qualified employee, same scoring/fallback
-// logic the optimizer uses for unassigned ("Свободно") tasks. Untouched
-// locked tasks (not delayed) are left alone, since their conflicts — if
-// any — were a deliberate dispatcher override (force-assign).
-export function reassignDelayedConflicts(tasks, staffDB, selectedDate, delayedTaskIds, resolver, windowDates) {
-  const result = tasks.map(t => ({ ...t }));
-  if (!delayedTaskIds || delayedTaskIds.length === 0) return { tasks: result, changes: [] };
-
-  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
-  const staff = mergeStaffWindow(staffDB, dates);
-  if (staff.length === 0) return { tasks: result, changes: [] };
-
-  const assignedTasks = {};
-  for (const s of staff) assignedTasks[s.name] = [];
-  for (const t of result) {
-    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
-      if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
-      assignedTasks[t.employee].push(t);
-    }
-  }
-
-  const delayedSet = new Set(delayedTaskIds);
-  const changes = [];
-
-  for (const task of result) {
-    if (!dates.includes(task.date) || !task.isLocked || !delayedSet.has(task.id)) continue;
-    if (task.employee === 'Не назначено') continue;
-
-    const currentEmp = task.employee;
-    const empTasks = (assignedTasks[currentEmp] || []).filter(t => t.id !== task.id);
-    const conflictsWithLocked = empTasks.some(t => t.isLocked && conflictsWith(t, task, resolver));
-    if (!conflictsWithLocked) continue;
-
-    assignedTasks[currentEmp] = empTasks;
-
-    // Pass A: best-scoring qualified employee, in shift, no conflicts.
-    // Load is compared first so tasks spread across everyone qualified
-    // instead of piling onto whoever happens to be positionally closest —
-    // distance only breaks ties between similarly-loaded candidates.
-    let bestStaff = null, bestScore = null;
-    for (const s of staff) {
-      if (s.name === currentEmp) continue;
-      if (!hasAllQuals(s.quals, task)) continue;
-      if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-      const score = scoreEmployee(s, assignedTasks, task, resolver);
-      if (!bestScore || score.load < bestScore.load ||
-          (score.load === bestScore.load && score.dist < bestScore.dist)) {
-        bestScore = score; bestStaff = s;
-      }
-    }
-
-    // Pass B: relax only the shift END boundary (stay a little late to
-    // finish) — still requires the task to START during the shift, and
-    // still no conflicts.
-    if (!bestStaff) {
-      let bestLoad = Infinity;
-      for (const s of staff) {
-        if (s.name === currentEmp) continue;
-        if (!hasAllQuals(s.quals, task)) continue;
-        if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
-        if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-        const load = (assignedTasks[s.name] || []).length;
-        if (load < bestLoad) { bestLoad = load; bestStaff = s; }
-      }
-    }
-
-    const idx = result.findIndex(t => t.id === task.id);
-    if (bestStaff) {
-      result[idx] = { ...result[idx], employee: bestStaff.name };
-      if (!assignedTasks[bestStaff.name]) assignedTasks[bestStaff.name] = [];
-      assignedTasks[bestStaff.name].push(result[idx]);
-      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: bestStaff.name, backlog: false });
-    } else {
-      result[idx] = { ...result[idx], employee: 'Не назначено', isLocked: false };
-      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: null, backlog: true });
-    }
-  }
-
-  return { tasks: result, changes };
-}
-
 // windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
 // staff shifts from any date in this window are assignable together, since
 // shifts and tasks both routinely cross midnight. Defaults to just
 // selectedDate if no window is given.
-export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates) {
+//
+// freezeBeforeTime (optional Date): tasks starting before this instant are
+// treated as effectively locked for this run regardless of their own
+// isLocked flag — already-started/already-done work never gets swept up
+// and reassigned just because something later in the day changed. Only
+// tasks at or after this instant are reset and re-searched for a better
+// assignment. Omit it to reset/reassign the whole window as before (the
+// "Запустить оптимизатор" button's behavior).
+export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime) {
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const isFrozen = t => t.isLocked || (freezeBeforeTime && t.start < freezeBeforeTime);
 
   let result = tasks.map(t =>
-    dates.includes(t.date) && !t.isLocked
+    dates.includes(t.date) && !isFrozen(t)
       ? { ...t, employee: 'Не назначено' }
       : { ...t }
   );
@@ -278,15 +202,16 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   const assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
 
-  // Pre-load locked tasks into the assignment map
+  // Pre-load frozen (locked, or already-started) tasks into the assignment
+  // map so the passes below treat their time slots as taken.
   for (const t of result) {
-    if (dates.includes(t.date) && t.isLocked && t.employee !== 'Не назначено') {
+    if (dates.includes(t.date) && isFrozen(t) && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
       assignedTasks[t.employee].push(t);
     }
   }
 
-  const toAssign = result.filter(t => dates.includes(t.date) && !t.isLocked);
+  const toAssign = result.filter(t => dates.includes(t.date) && !isFrozen(t));
 
   // Sort by difficulty: tasks with fewer eligible employees go first
   // so rare/constrained tasks get first pick of available staff
