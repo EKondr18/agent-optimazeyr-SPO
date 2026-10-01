@@ -6,8 +6,8 @@
 // in or extend, arrived at by actually re-running the optimizer with them
 // added — so the dispatcher sees a proposal that accounts for reshuffling
 // the whole day, not just a literal one-task-at-a-time patch.
-import { hasAllQuals, runOptimizer } from '../optimizer';
-import { packIntoChannels, bucketizeChannels } from './staffDemand';
+import { hasAllQuals, runOptimizer, improveAssignment } from '../optimizer.js';
+import { packIntoChannels, bucketizeChannels } from './staffDemand.js';
 
 // Merges adjacent same-count buckets into a single interval, so the result
 // reads as "нужно ещё 2 чел. 14:00–17:00" instead of one row per bucket.
@@ -198,6 +198,17 @@ export function resolveStaffingWithCallIns({
 
     currentStaffDB = { ...staffDB, [targetDate]: workingStaff };
     currentTasks = runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
+  }
+
+  // One improvement pass over the final plan (walking, hand-off margins, still-
+  // open tasks). The people the plan calls in or extends are pinned: their
+  // tasks are the reason they're in the plan, and the pass would otherwise
+  // happily drain them toward idle colleagues. Done once here rather than
+  // inside the loop above, which re-runs the optimizer for every addition.
+  if (actions.length > 0 || currentTasks.some(t => t.employee === 'Не назначено')) {
+    currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
+      pinnedEmployees: actions.map(a => a.name),
+    }).tasks;
   }
 
   const unresolved = currentTasks.filter(t => dates.includes(t.date) && t.employee === 'Не назначено');

@@ -1,4 +1,4 @@
-import { getPosDistance } from './utils/posDistance';
+import { getPosDistance } from './utils/posDistance.js';
 
 const MIN_TRANSITION_MS = 5 * 60000;
 const MIN_TRANSITION_POS_DIST = 5;
@@ -181,13 +181,23 @@ function mergeStaffWindow(staffDB, dates) {
 // bumping, and so on) rather than giving up after a single hop. Not capped
 // at "3 people" or any fixed hop count — it keeps going through whoever's
 // left in the pool as long as it's still making progress. `visited` guards
-// against cycles (an employee already being "opened up" earlier in this
-// same chain is skipped rather than revisited), so the search always
-// terminates — at most once per employee in the pool, however long the
-// chain gets. Returns { assigned, migrations } on success (an updated
-// assignment map plus the ordered list of {task, to} moves that produced
-// it) or null if no placement exists anywhere in the chain.
-function findChainPlacement(task, staffByLoad, assigned, resolver, visited) {
+// against cycles AND against re-exploring: an employee already "opened up"
+// anywhere in this search — whether that attempt worked or not — is skipped
+// rather than revisited (the classic augmenting-path rule). The visited set is
+// never un-marked on backtrack: doing that made the search exponential once
+// many tasks were stuck, since every dead end got re-explored through each
+// different route. Now each employee is opened at most once per search, so it
+// always terminates, in polynomial time, however long the chain gets.
+//
+// Returns { assigned, migrations } on success (an updated assignment map
+// plus the ordered list of {task, to} moves that produced it) or null if no
+// placement exists anywhere in the chain.
+//
+// `isBumpable` says which already-placed tasks may be displaced — by default
+// anything not locked, but callers that also freeze work by time (already
+// started / outside the repair window) must say so, or a chain could move a
+// task that must stay put.
+function findChainPlacement(task, staffByLoad, assigned, resolver, visited, isBumpable = t => !t.isLocked) {
   for (const s of staffByLoad) {
     if (visited.has(s.name)) continue;
     if (!hasAllQuals(s.quals, task)) continue;
@@ -199,19 +209,18 @@ function findChainPlacement(task, staffByLoad, assigned, resolver, visited) {
     if (conflicts.length === 0) {
       return { assigned: { ...assigned, [s.name]: [...empTasks, task] }, migrations: [{ task, to: s.name }] };
     }
-    if (conflicts.some(ct => ct.isLocked)) continue;
+    if (conflicts.some(ct => !isBumpable(ct))) continue;
 
     visited.add(s.name);
     let working = { ...assigned, [s.name]: empTasks.filter(t => !conflicts.includes(t)) };
     const chainMigrations = [];
     let ok = true;
     for (const conflict of conflicts) {
-      const sub = findChainPlacement(conflict, staffByLoad, working, resolver, visited);
+      const sub = findChainPlacement(conflict, staffByLoad, working, resolver, visited, isBumpable);
       if (!sub) { ok = false; break; }
       working = sub.assigned;
       chainMigrations.push(...sub.migrations);
     }
-    visited.delete(s.name);
 
     if (ok) {
       working = { ...working, [s.name]: [...(working[s.name] || []), task] };
@@ -284,7 +293,10 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
       const staffByLoad = [...staff].sort(
         (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
       );
-      const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set());
+      const chain = findChainPlacement(
+        task, staffByLoad, assignedTasks, resolver, new Set(),
+        t => !t.isLocked && t.start >= scopeStart
+      );
       if (chain) {
         // chain.assigned already reflects the FULL outcome (the broken
         // task included) — the shared commit below must only update
@@ -339,53 +351,118 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
   return { tasks: result, changes };
 }
 
-// One employee's total walking cost for the day: their shift's base point to
-// the first task, then each task's exit point to the next one's entry point.
-// Overlapping (complementary same-flight) tasks need no travel between them,
-// same convention MetricsSummary uses for its average-transition metric.
-function routeCost(staffMember, empTasks, resolver) {
-  const sorted = [...empTasks].sort((a, b) => a.start - b.start);
-  let cost = 0;
-  let prev = null;
+// ── Cost model ──────────────────────────────────────────────────────────────
+// What "better" means for the construction (regret) and the improvement
+// search: one weighted sum rather than "load strictly outranks everything",
+// so the trade-offs can be tuned. Units: `load` per unit of Σ(tasks per
+// employee)², `walk` per metre (or per heuristic unit when no travel network
+// is loaded), `slack` per minute of missing buffer between hand-offs,
+// `overtime` per minute worked past shift end. The defaults keep load
+// balancing dominant, as the greedy passes do.
+export const DEFAULT_WEIGHTS = { load: 100, walk: 1, slack: 3, overtime: 5 };
+
+// A hand-off between two consecutive tasks is "tight" when it leaves less
+// spare time than this beyond the walk itself. Flights slip; a schedule with
+// no margin turns every small delay into a re-plan.
+const TARGET_SLACK_MS = 15 * 60000;
+
+export function resolveWeights(weights) {
+  return { ...DEFAULT_WEIGHTS, ...(weights || {}) };
+}
+
+// How long the walk between two points takes, on the same basis
+// hasInsufficientGap uses (real network when loaded, else the heuristic).
+function transitMs(exitPos, entryPos, resolver) {
+  const seconds = resolver ? resolver.secondsBetween(exitPos, entryPos) : null;
+  if (seconds != null) return seconds * 1000;
+  return getPosDistance(exitPos, entryPos) >= MIN_TRANSITION_POS_DIST ? MIN_TRANSITION_MS : 0;
+}
+
+// One employee's day, measured: walking (shift base point → first task, then
+// each exit point → next entry point), minutes of buffer missing below the
+// target on each hand-off, and minutes worked past the end of the shift their
+// tasks belong to. Overlapping (complementary same-flight) tasks need no
+// travel between them, same convention MetricsSummary uses. `sorted` must
+// already be ordered by start — the improvement search keeps every
+// employee's list that way (see insertSorted) so this never has to sort.
+function routeStats(shifts, sorted, resolver) {
+  const basePos = shifts?.[0]?.basePos ?? null;
+  let walk = 0, slackShort = 0, prev = null;
   for (const t of sorted) {
     const entry = t.entryPos ?? t.pos;
     if (prev === null) {
-      if (staffMember.basePos) cost += posDist(staffMember.basePos, entry, resolver);
+      if (basePos) walk += posDist(basePos, entry, resolver);
     } else if (t.start >= prev.end) {
-      cost += posDist(prev.exitPos ?? prev.pos, entry, resolver);
+      const exit = prev.exitPos ?? prev.pos;
+      walk += posDist(exit, entry, resolver);
+      const spare = (t.start - prev.end) - transitMs(exit, entry, resolver);
+      slackShort += Math.max(0, TARGET_SLACK_MS - spare) / 60000;
     }
     prev = t;
   }
-  return cost;
+  let overtime = 0;
+  for (const s of shifts || []) {
+    let maxEnd = null;
+    for (const t of sorted) {
+      if (t.start >= s.shiftStart && t.start <= s.shiftEnd && (maxEnd === null || t.end > maxEnd)) maxEnd = t.end;
+    }
+    if (maxEnd && maxEnd > s.shiftEnd) overtime += (maxEnd - s.shiftEnd) / 60000;
+  }
+  return { walk, slackShort, overtime };
 }
 
-// Local-search improvement pass, run AFTER the constructive passes (greedy +
-// rotation + relaxation) have produced a valid assignment. The construction
-// commits each task once and never looks back; this goes back over what it
-// built and keeps applying whichever single move helps most — relocating one
-// task to another employee, or swapping two tasks between two employees —
-// until no move improves anything. Every candidate move is checked with the
-// exact same rules the construction uses (qualifications, shift bounds,
-// conflicts incl. travel feasibility), so it can only ever produce another
-// valid assignment, never trade correctness for a nicer number.
+// A copy of `list` (ordered by start) with `task` added in its place.
+function insertSorted(list, task) {
+  let i = list.length;
+  while (i > 0 && list[i - 1].start > task.start) i--;
+  return [...list.slice(0, i), task, ...list.slice(i)];
+}
+
+function employeeCost(W, shifts, sortedTasks, resolver) {
+  const r = routeStats(shifts, sortedTasks, resolver);
+  return W.load * sortedTasks.length ** 2 + W.walk * r.walk + W.slack * r.slackShort + W.overtime * r.overtime;
+}
+
+// Improvement pass, run AFTER the constructive passes have produced a valid
+// assignment. The construction commits each task once and never looks back;
+// this goes back over what it built and keeps applying whichever single move
+// lowers the total weighted cost most — until none does:
+//   • place a still-unassigned task (directly where it fits cheapest, else by
+//     chaining displacements — a placement always beats leaving it open),
+//   • relocate one task to another employee,
+//   • swap two tasks between two employees.
+// Every candidate is checked with the construction's own rules
+// (qualifications, shift bounds, conflicts incl. travel feasibility), so the
+// result is always another valid assignment. Each accepted move strictly
+// lowers (open tasks, total cost), so the search ends on its own — no time or
+// iteration cap.
 //
-// "Better" is lexicographic, matching the construction's own priority: first
-// how evenly work is spread (sum of squared loads), then total walking
-// distance. A relocation only counts if it improves the first, or ties it and
-// improves the second; a swap never changes loads, so it competes on walking
-// distance alone. Each accepted move strictly improves that pair, so the
-// search always terminates on its own — no time or iteration cap needed.
-//
-// Horizon (both optional Dates): tasks starting before `frozenBefore` — and
-// locked ones — never move (they still count for conflicts and distances).
-// With `priorityUntil`, tasks starting before it are searched to convergence
-// FIRST, then the rest of the movable pool gets its turn — near-term
-// arrangements get settled before far-term ones are polished.
-export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, { frozenBefore, priorityUntil } = {}) {
+// options:
+//   weights          — cost weights (see DEFAULT_WEIGHTS)
+//   frozenBefore     — Date; tasks starting earlier (and locked ones) never
+//                      move, though they still count for conflicts/cost
+//   priorityUntil    — Date; tasks starting before it are searched to
+//                      convergence first, then the rest of the movable pool
+//   scopeEmployees   — iterable of names; only their tasks are moved at the
+//                      start. Any employee a move touches joins the scope, so
+//                      a change ripples outward as far as it actually helps
+//                      and no further — the incremental mode
+//   scopeTaskIds     — iterable of ids; only these unassigned tasks are placed
+//                      (even inside the frozen window)
+//   pinnedEmployees  — iterable of names whose tasks must not move (they may
+//                      still receive tasks)
+export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
+  const { frozenBefore, priorityUntil, weights } = options;
+  const W = resolveWeights(weights);
+  const scope = options.scopeEmployees ? new Set(options.scopeEmployees) : null;
+  const scopeTaskIds = options.scopeTaskIds ? new Set(options.scopeTaskIds) : null;
+  const pinned = options.pinnedEmployees ? new Set(options.pinnedEmployees) : null;
+
   const result = tasks.map(t => ({ ...t }));
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
-  if (staff.length === 0) return { tasks: result, moves: 0 };
+  const touchedList = () => (scope ? [...scope] : []);
+  if (staff.length === 0) return { tasks: result, moves: 0, touched: touchedList() };
 
   const shiftsByName = new Map();
   for (const s of staff) {
@@ -394,99 +471,261 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
   }
   const indexById = new Map(result.map((t, i) => [t.id, i]));
 
-  const byEmp = {};
-  for (const name of shiftsByName.keys()) byEmp[name] = [];
-  for (const t of result) {
-    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
-      if (!byEmp[t.employee]) byEmp[t.employee] = [];
-      byEmp[t.employee].push(t);
+  let byEmp = {};
+  const costCache = new Map();
+  const gainCache = new Map();
+  const rebuildByEmp = () => {
+    byEmp = {};
+    for (const name of shiftsByName.keys()) byEmp[name] = [];
+    for (const t of result) {
+      if (dates.includes(t.date) && t.employee !== 'Не назначено') {
+        if (!byEmp[t.employee]) byEmp[t.employee] = [];
+        byEmp[t.employee].push(t);
+      }
     }
-  }
+    for (const list of Object.values(byEmp)) list.sort((a, b) => a.start - b.start);
+    costCache.clear();
+    gainCache.clear();
+  };
+  rebuildByEmp();
 
   const isMovable = t =>
     dates.includes(t.date) && !t.isLocked && t.employee !== 'Не назначено' &&
-    (!frozenBefore || t.start >= frozenBefore);
+    !(pinned && pinned.has(t.employee)) && (!frozenBefore || t.start >= frozenBefore);
+  const inScope = name => !scope || scope.has(name);
   const phases = priorityUntil
     ? [t => isMovable(t) && t.start < priorityUntil, isMovable]
     : [isMovable];
 
-  // `empTasks` = what the employee would already have, WITHOUT this task.
-  const fits = (name, task, empTasks) => {
-    const shifts = shiftsByName.get(name);
-    if (!shifts) return false;
-    if (!shifts.some(s => hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.end <= s.shiftEnd)) return false;
-    return !hasConflict(empTasks, task, resolver);
+  // Qualification + shift-bounds half of "does this task fit this employee" —
+  // independent of what else they have, so memoized; the cheap test that
+  // rules most (task, employee) pairs out before any cost is computed.
+  const staticMemo = new Map();
+  const staticFits = (name, task) => {
+    const key = name + '\u0000' + task.id;
+    let ok = staticMemo.get(key);
+    if (ok === undefined) {
+      const shifts = shiftsByName.get(name);
+      ok = !!shifts && shifts.some(s =>
+        hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.end <= s.shiftEnd
+      );
+      staticMemo.set(key, ok);
+    }
+    return ok;
   };
-  const costOf = (name, empTasks) => routeCost(shiftsByName.get(name)?.[0] ?? {}, empTasks, resolver);
+  // `empTasks` = what the employee would already have, WITHOUT this task.
+  const fits = (name, task, empTasks) =>
+    staticFits(name, task) && !hasConflict(empTasks, task, resolver);
+  const costOf = (name, empTasks) => employeeCost(W, shiftsByName.get(name), empTasks, resolver);
+  const curCost = name => {
+    if (!costCache.has(name)) costCache.set(name, costOf(name, byEmp[name] || []));
+    return costCache.get(name);
+  };
+  const invalidate = name => { costCache.delete(name); gainCache.delete(name); };
+  // How much the employee's walking/slack/overtime cost would drop if this one
+  // task were taken off them (the load term is handled separately). Used only
+  // to rule out hopeless candidates: inserting a task anywhere never costs
+  // less than nothing, so if removing it frees up less than a move would add,
+  // that move can't help and isn't worth evaluating.
+  const walkGain = (name, task) => {
+    let m = gainCache.get(name);
+    if (!m) { m = new Map(); gainCache.set(name, m); }
+    let g = m.get(task.id);
+    if (g === undefined) {
+      const list = byEmp[name];
+      const rest = list.filter(t => t.id !== task.id);
+      g = (costOf(name, list) - W.load * list.length ** 2) - (costOf(name, rest) - W.load * rest.length ** 2);
+      m.set(task.id, g);
+    }
+    return g;
+  };
   const EPS = 1e-6;
-  const isBetter = (m, best) =>
-    !best || m.dSq < best.dSq || (m.dSq === best.dSq && m.dDist < best.dDist);
-  const isImproving = m => m.dSq < 0 || (m.dSq === 0 && m.dDist < -EPS);
   const reassign = (id, to) => {
     const i = indexById.get(id);
     result[i] = { ...result[i], employee: to };
     return result[i];
   };
 
+  // Place still-unassigned tasks: cheapest direct fit, else a displacement chain.
+  const insertBacklog = () => {
+    let inserted = 0;
+    const pool = result.filter(t =>
+      dates.includes(t.date) && !t.isLocked && t.employee === 'Не назначено' &&
+      // Tasks the caller names explicitly (a changed task) are placed even
+      // inside the frozen window: leaving them open there would be worse.
+      (scopeTaskIds ? scopeTaskIds.has(t.id) : (!frozenBefore || t.start >= frozenBefore))
+    );
+    for (const task of pool) {
+      let best = null;
+      for (const name of shiftsByName.keys()) {
+        const emp = byEmp[name];
+        if (!fits(name, task, emp)) continue;
+        const delta = costOf(name, insertSorted(emp, task)) - curCost(name);
+        if (!best || delta < best.delta) best = { name, delta };
+      }
+      if (best) {
+        const moved = reassign(task.id, best.name);
+        byEmp[best.name] = insertSorted(byEmp[best.name], moved);
+        invalidate(best.name);
+        if (scope) scope.add(best.name);
+        inserted++;
+        continue;
+      }
+      const staffByLoad = [...staff].sort(
+        (a, b) => (byEmp[a.name] || []).length - (byEmp[b.name] || []).length
+      );
+      const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable);
+      if (!chain) continue;
+      for (const { task: mt, to } of chain.migrations) {
+        const idx = indexById.get(mt.id);
+        if (scope) {
+          scope.add(to);
+          if (result[idx].employee !== 'Не назначено') scope.add(result[idx].employee);
+        }
+        result[idx] = { ...result[idx], employee: to };
+      }
+      rebuildByEmp();
+      inserted++;
+    }
+    return inserted;
+  };
+
   let moves = 0;
-  for (const isMover of phases) {
-    let improved = true;
-    while (improved) {
-      improved = false;
-      const movers = result.filter(t => isMover(t));
-      for (const stale of movers) {
-        const task = result[indexById.get(stale.id)];
-        if (!isMover(task)) continue;
-        const A = task.employee;
-        const aTasks = byEmp[A];
-        const aRest = aTasks.filter(t => t.id !== task.id);
-        const costA = costOf(A, aTasks);
+  let progress = true;
+  // Evaluating every (task, candidate) pair is the expensive part, so the
+  // first rounds skip pairs that provably can't improve (see walkGain). That
+  // bound is exact except for a rare quirk — a task overlapping a neighbour
+  // (complementary same-flight work) can make an insertion cost LESS than
+  // nothing — so once the pruned search stops, one more full, unpruned round
+  // runs to confirm it's a true local optimum, continuing if it isn't.
+  let prune = true;
+  while (progress) {
+    progress = false;
 
-        let best = null;
+    const inserted = insertBacklog();
+    if (inserted > 0) { moves += inserted; progress = true; }
 
-        // Relocate `task` to another employee.
-        for (const B of shiftsByName.keys()) {
-          if (B === A) continue;
-          const bTasks = byEmp[B];
-          const dSq = (aTasks.length - 1) ** 2 + (bTasks.length + 1) ** 2 - aTasks.length ** 2 - bTasks.length ** 2;
-          if (dSq > 0) continue;
-          if (!fits(B, task, bTasks)) continue;
-          const dDist = costOf(A, aRest) + costOf(B, [...bTasks, task]) - costA - costOf(B, bTasks);
-          const move = { kind: 'relocate', B, dSq, dDist };
-          if (isImproving(move) && isBetter(move, best)) best = move;
+    for (const isMover of phases) {
+      let improved = true;
+      while (improved) {
+        improved = false;
+        const movers = result.filter(t => isMover(t) && inScope(t.employee));
+        for (const stale of movers) {
+          const task = result[indexById.get(stale.id)];
+          if (!isMover(task) || !inScope(task.employee)) continue;
+          const A = task.employee;
+          const aTasks = byEmp[A];
+          const aRest = aTasks.filter(t => t.id !== task.id);
+          const costA = curCost(A);
+          const costARest = costOf(A, aRest);
+          const gainA = walkGain(A, task);
+
+          let best = null;
+
+          // Relocate `task` to another employee.
+          for (const B of shiftsByName.keys()) {
+            if (B === A) continue;
+            const bTasks = byEmp[B];
+            // Lower bound on the delta: B's extra load cost minus what A saves.
+            if (prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) >= -EPS) continue;
+            if (!fits(B, task, bTasks)) continue;
+            const delta = costARest + costOf(B, insertSorted(bTasks, task)) - costA - curCost(B);
+            if (delta < -EPS && (!best || delta < best.delta)) best = { kind: 'relocate', B, delta };
+          }
+
+          // Swap `task` with a movable task of another employee.
+          for (const other of result) {
+            if (other.employee === A || !isMovable(other) || !byEmp[other.employee]) continue;
+            const B = other.employee;
+            if (prune && gainA + walkGain(B, other) <= EPS) continue;
+            if (!staticFits(B, task) || !staticFits(A, other)) continue;
+            const bTasks = byEmp[B];
+            const bRest = bTasks.filter(t => t.id !== other.id);
+            if (hasConflict(bRest, task, resolver) || hasConflict(aRest, other, resolver)) continue;
+            const delta = costOf(A, insertSorted(aRest, other)) + costOf(B, insertSorted(bRest, task)) - costA - curCost(B);
+            if (delta < -EPS && (!best || delta < best.delta)) best = { kind: 'swap', B, other, delta };
+          }
+
+          if (!best) continue;
+          if (best.kind === 'relocate') {
+            const moved = reassign(task.id, best.B);
+            byEmp[A] = aRest;
+            byEmp[best.B] = insertSorted(byEmp[best.B], moved);
+          } else {
+            const bRest = byEmp[best.B].filter(t => t.id !== best.other.id);
+            const movedTask = reassign(task.id, best.B);
+            const movedOther = reassign(best.other.id, A);
+            byEmp[A] = insertSorted(aRest, movedOther);
+            byEmp[best.B] = insertSorted(bRest, movedTask);
+          }
+          invalidate(A);
+          invalidate(best.B);
+          if (scope) scope.add(best.B);
+          moves++;
+          improved = true;
+          progress = true;
         }
-
-        // Swap `task` with a movable task of another employee.
-        for (const other of result) {
-          if (other.employee === A || !isMovable(other) || !byEmp[other.employee]) continue;
-          const B = other.employee;
-          const bTasks = byEmp[B];
-          const bRest = bTasks.filter(t => t.id !== other.id);
-          if (!fits(B, task, bRest) || !fits(A, other, aRest)) continue;
-          const dDist = costOf(A, [...aRest, other]) + costOf(B, [...bRest, task]) - costA - costOf(B, bTasks);
-          const move = { kind: 'swap', B, other, dSq: 0, dDist };
-          if (isImproving(move) && isBetter(move, best)) best = move;
-        }
-
-        if (!best) continue;
-        if (best.kind === 'relocate') {
-          const moved = reassign(task.id, best.B);
-          byEmp[A] = aRest;
-          byEmp[best.B] = [...byEmp[best.B], moved];
-        } else {
-          const bRest = byEmp[best.B].filter(t => t.id !== best.other.id);
-          const movedTask = reassign(task.id, best.B);
-          const movedOther = reassign(best.other.id, A);
-          byEmp[A] = [...aRest, movedOther];
-          byEmp[best.B] = [...bRest, movedTask];
-        }
-        moves++;
-        improved = true;
       }
     }
+    if (!progress && prune) { prune = false; progress = true; }
   }
 
-  return { tasks: result, moves };
+  return { tasks: result, moves, touched: touchedList() };
+}
+
+// Regret-2 construction (replaces the hardest-first order of PASS 1).
+// "Hardest first" only counts how many people are qualified at all; it can't
+// see that one of them is far better for this task than the rest, or that a
+// colleague needs that same person. Regret does: for every open task, take
+// its cheapest feasible employee (c1) and second cheapest (c2); regret =
+// c2 − c1, i.e. what it costs if the best slot goes to someone else (a task
+// with only one feasible employee has infinite regret). Place the task with
+// the biggest regret at its best slot, re-cost the employee who just got a
+// task, repeat. A placement's cost is the weighted marginal cost: the load it
+// adds (2n+1 for an employee already at n) plus the insertion walking
+// distance. Returns the tasks nobody could take, for the later passes.
+function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
+  const costFor = (task, s) => {
+    if (!hasAllQuals(s.quals, task)) return null;
+    if (s.shiftStart > task.start || task.end > s.shiftEnd) return null;
+    const emp = assignedTasks[s.name] || [];
+    if (hasConflict(emp, task, resolver)) return null;
+    return W.load * (2 * emp.length + 1) + W.walk * scoreEmployee(s, assignedTasks, task, resolver).dist;
+  };
+
+  const table = new Map(toAssign.map(t => [t.id, staff.map(s => costFor(t, s))]));
+  const remaining = new Map(toAssign.map(t => [t.id, t]));
+  const backlog = [];
+
+  while (remaining.size > 0) {
+    let pick = null;
+    for (const [id, task] of remaining) {
+      let c1 = null, c2 = null, i1 = -1;
+      const costs = table.get(id);
+      for (let i = 0; i < costs.length; i++) {
+        const c = costs[i];
+        if (c === null) continue;
+        if (c1 === null || c < c1) { c2 = c1; c1 = c; i1 = i; }
+        else if (c2 === null || c < c2) c2 = c;
+      }
+      if (c1 === null) { backlog.push(task); remaining.delete(id); continue; }
+      const regret = c2 === null ? Infinity : c2 - c1;
+      if (!pick || regret > pick.regret || (regret === pick.regret && c1 < pick.c1)) {
+        pick = { task, i1, regret, c1 };
+      }
+    }
+    if (!pick) break;
+
+    const chosen = staff[pick.i1];
+    commit(result, assignedTasks, pick.task.id, chosen.name);
+    remaining.delete(pick.task.id);
+    // Only the employee who just received a task changed — re-cost that column.
+    for (const [id, task] of remaining) {
+      const costs = table.get(id);
+      staff.forEach((s, i) => { if (s.name === chosen.name) costs[i] = costFor(task, s); });
+    }
+  }
+  return backlog;
 }
 
 // windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
@@ -501,7 +740,15 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
 // tasks at or after this instant are reset and re-searched for a better
 // assignment. Omit it to reset/reassign the whole window as before (the
 // "Запустить оптимизатор" button's behavior).
-export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime) {
+//
+// options.construction: 'regret' (default) places first whichever task would
+// lose most if it missed its best employee (see constructRegret); 'greedy'
+// places tasks one by one, hardest first. On the real demo tasks with a
+// generated roster, regret starts from far better assignments and, when staff
+// is short, leaves noticeably fewer tasks unassigned (27 vs 35 at 16 people),
+// while with plenty of staff the two end up about equal after the improvement
+// pass. options.weights: cost weights for 'regret' (see DEFAULT_WEIGHTS).
+export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime, options = {}) {
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const isFrozen = t => t.isLocked || (freezeBeforeTime && t.start < freezeBeforeTime);
 
@@ -552,19 +799,23 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   // the next one keeps winning indefinitely while equally-qualified staff
   // sit idle (distance only breaks ties between similarly-loaded people).
   let backlog = [];
-  for (const task of toAssign) {
-    let bestStaff = null, bestScore = null;
-    for (const s of staff) {
-      if (!hasAllQuals(s.quals, task)) continue;
-      if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-      const score = scoreEmployee(s, assignedTasks, task, resolver);
-      if (!bestScore || score.load < bestScore.load ||
-          (score.load === bestScore.load && score.dist < bestScore.dist)) {
-        bestScore = score; bestStaff = s;
+  if ((options.construction ?? 'regret') === 'regret') {
+    backlog = constructRegret(toAssign, staff, assignedTasks, result, resolver, resolveWeights(options.weights));
+  } else {
+    for (const task of toAssign) {
+      let bestStaff = null, bestScore = null;
+      for (const s of staff) {
+        if (!hasAllQuals(s.quals, task)) continue;
+        if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
+        if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
+        const score = scoreEmployee(s, assignedTasks, task, resolver);
+        if (!bestScore || score.load < bestScore.load ||
+            (score.load === bestScore.load && score.dist < bestScore.dist)) {
+          bestScore = score; bestStaff = s;
+        }
       }
+      bestStaff ? commit(result, assignedTasks, task.id, bestStaff.name) : backlog.push(task);
     }
-    bestStaff ? commit(result, assignedTasks, task.id, bestStaff.name) : backlog.push(task);
   }
 
   // ── PASS 2: Rotation – relocate conflicting tasks to free up a slot ──────
@@ -580,7 +831,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
     const staffByLoad = [...staff].sort(
       (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
     );
-    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set());
+    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), t => !isFrozen(t));
     if (chain) {
       assignedTasks = chain.assigned;
       for (const { task: mt, to } of chain.migrations) {
@@ -619,4 +870,139 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   }
 
   return result;
+}
+
+const MIN_DATE = new Date(-8.64e15);
+const MAX_DATE = new Date(8.64e15);
+
+// Incremental update for a batch of task changes — the entry point a backend
+// calls when the task generator sends, say, 20 new/changed/cancelled tasks.
+// Re-solving the whole window for that would be wasteful and would also churn
+// assignments nobody asked to touch; this repairs only what the batch
+// affects and lets the effect spread exactly as far as it actually helps.
+//
+//   changes — task objects to add or update (matched by `id`; for an existing
+//             task only the supplied fields change, its assignment and lock
+//             are kept), or { id, removed: true } to drop one.
+//
+// Steps: apply the changes → unassign changed tasks their employee can no
+// longer take (qualification / shift) → repair conflicts they caused (chains
+// of displacements, nothing before `now` is touched) → place the open
+// changed tasks and run the improvement search starting from the affected
+// employees only; every employee a move touches joins the search, so the
+// change ripples outward until nothing more improves.
+//
+// options:
+//   now                — Date: tasks starting before now + frozenWindowMs are
+//                        hard-frozen for the improvement search (only the
+//                        conflict repair may touch them, when genuinely
+//                        broken); omit for no freeze
+//   frozenWindowMs     — default 1 h
+//   stabilityWindowMs  — default 3 h; the improvement search settles tasks
+//                        before now + this first, then the rest
+//   farReshuffle       — true: also fully re-optimize everything beyond the
+//                        stability window and search the whole pool (what the
+//                        frontend's delay module does). Default false: purely
+//                        incremental.
+//   escalate           — default true. If a changed task is still without an
+//                        employee after the incremental repair (the local
+//                        chains weren't deep enough), fall back to a fuller
+//                        re-optimization and keep it only if it leaves fewer
+//                        tasks open. With `now` given this rebuilds only what
+//                        starts beyond the stability window — the near term
+//                        is never churned for it; without `now` there is no
+//                        horizon, so it rebuilds the whole window (and can
+//                        move a lot to place one task)
+//   weights, construction — see improveAssignment / runOptimizer
+//
+// Returns { tasks, touched, changedIds, unplaced, repairs, escalated }:
+// `unplaced` are changed tasks that still have no employee; `repairs`
+// describes each task the conflict repair moved or dropped.
+export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates, changes, options = {}) {
+  const {
+    now, frozenWindowMs = 3600000, stabilityWindowMs = 3 * 3600000,
+    farReshuffle = false, escalate = true, weights, construction,
+  } = options;
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const frozenBefore = now ? new Date(now.getTime() + frozenWindowMs) : undefined;
+  const stabilityEnd = now ? new Date(now.getTime() + stabilityWindowMs) : undefined;
+
+  // 1. Apply the changes; remember which employees they touch.
+  const byId = new Map(tasks.map(t => [t.id, t]));
+  const touched = new Set();
+  const changedIds = new Set();
+  for (const c of changes) {
+    const old = byId.get(c.id);
+    if (old && old.employee !== 'Не назначено') touched.add(old.employee);
+    if (c.removed) { byId.delete(c.id); continue; }
+    byId.set(c.id, old
+      ? { ...old, ...c }
+      : { employee: 'Не назначено', isLocked: false, baseStart: c.start, baseEnd: c.end, ...c });
+    changedIds.add(c.id);
+  }
+  let result = [...byId.values()];
+
+  // 2. A changed task its employee can no longer take goes back to open.
+  const shiftsByName = new Map();
+  for (const sh of mergeStaffWindow(staffDB, dates)) {
+    if (!shiftsByName.has(sh.name)) shiftsByName.set(sh.name, []);
+    shiftsByName.get(sh.name).push(sh);
+  }
+  result = result.map(t => {
+    if (!changedIds.has(t.id) || t.employee === 'Не назначено' || t.isLocked) return t;
+    const ok = (shiftsByName.get(t.employee) || []).some(sh =>
+      hasAllQuals(sh.quals, t) && sh.shiftStart <= t.start && t.start <= sh.shiftEnd
+    );
+    return ok ? t : { ...t, employee: 'Не назначено' };
+  });
+
+  // 3. (Optional) full free re-optimization beyond the stability window.
+  if (farReshuffle) {
+    result = runOptimizer(result, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
+  }
+
+  // 4. Repair conflicts the changes caused. Nothing before `now` moves.
+  const repair = patchConflicts(result, staffDB, selectedDate, resolver, dates, now ?? MIN_DATE, MAX_DATE);
+  result = repair.tasks;
+  const placeIds = new Set(changedIds);
+  for (const c of repair.changes) {
+    if (c.from) touched.add(c.from);
+    if (c.to) touched.add(c.to);
+    if (c.backlog) placeIds.add(c.taskId);
+  }
+  for (const id of changedIds) {
+    const t = result.find(x => x.id === id);
+    if (t && t.employee !== 'Не назначено') touched.add(t.employee);
+  }
+
+  // 5. Place what's still open and improve from the affected employees outward.
+  const improved = improveAssignment(result, staffDB, selectedDate, resolver, dates, {
+    weights, frozenBefore, priorityUntil: stabilityEnd,
+    scopeEmployees: farReshuffle ? undefined : touched,
+    scopeTaskIds: farReshuffle ? undefined : placeIds,
+  });
+
+  const openIn = ts => ts.filter(t => dates.includes(t.date) && t.employee === 'Не назначено').length;
+  const unplacedOf = ts => ts
+    .filter(t => placeIds.has(t.id) && t.employee === 'Не назначено')
+    .map(t => t.id);
+
+  let finalTasks = improved.tasks;
+  let escalated = false;
+  if (escalate && !farReshuffle && unplacedOf(finalTasks).length > 0) {
+    const rebuilt = runOptimizer(finalTasks, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
+    const polished = improveAssignment(rebuilt, staffDB, selectedDate, resolver, dates, {
+      weights, frozenBefore, priorityUntil: stabilityEnd,
+    }).tasks;
+    if (openIn(polished) < openIn(finalTasks)) { finalTasks = polished; escalated = true; }
+  }
+
+  return {
+    tasks: finalTasks,
+    touched: farReshuffle || escalated ? [] : improved.touched,
+    changedIds: [...changedIds],
+    unplaced: unplacedOf(finalTasks),
+    repairs: repair.changes,
+    escalated,
+  };
 }

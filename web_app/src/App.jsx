@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ConfigProvider, Layout, Button, Select, Switch, Input,
   Checkbox, Space, Drawer, Collapse, Typography, Alert,
-  Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal,
+  Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal, Slider,
 } from 'antd';
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
@@ -15,7 +15,7 @@ import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
-import { runOptimizer, patchConflicts, improveAssignment, findConflicts, hasAllQuals } from './optimizer';
+import { runOptimizer, improveAssignment, applyChanges, DEFAULT_WEIGHTS, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -214,7 +214,7 @@ function SidebarContent({
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, selectedDate, setSelectedDate,
-  handleRunOptimizer, handleResetBacklog,
+  handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   onClose,
 }) {
@@ -381,6 +381,38 @@ function SidebarContent({
                 Сбросить в бэклог
               </Button>
             </Space>
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>Приоритеты (1 = по умолчанию)</Text>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, fontSize: 11 }}
+                  onClick={() => setOptPriorities({ load: 1, walk: 1, slack: 1, overtime: 1 })}
+                >
+                  сбросить
+                </Button>
+              </div>
+              {[
+                ['load', 'Ровная нагрузка'],
+                ['walk', 'Меньше ходьбы'],
+                ['slack', 'Запас по времени'],
+                ['overtime', 'Меньше сверхурочных'],
+              ].map(([key, label]) => (
+                <div key={key} style={{ marginTop: 4 }}>
+                  <Text style={{ fontSize: 12 }}>{label}</Text>
+                  <Slider
+                    min={0}
+                    max={3}
+                    step={0.5}
+                    value={optPriorities[key]}
+                    onChange={v => setOptPriorities(prev => ({ ...prev, [key]: v }))}
+                    style={{ margin: '2px 6px 0' }}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
 
           <Divider style={{ margin: '8px 0' }} />
@@ -445,6 +477,13 @@ export default function App() {
   // — null means "show the full window" (default); set by either chart's
   // onRelayout so zooming one updates both rulers together.
   const [ganttVisibleRange, setGanttVisibleRange] = useState(null);
+  // How much each aim matters to the optimizer, as a multiplier on the
+  // defaults (1 = default, 0 = ignore it). See DEFAULT_WEIGHTS in optimizer.js.
+  const [optPriorities, setOptPriorities] = useState({ load: 1, walk: 1, slack: 1, overtime: 1 });
+  const optWeights = useMemo(
+    () => Object.fromEntries(Object.entries(DEFAULT_WEIGHTS).map(([k, v]) => [k, v * optPriorities[k]])),
+    [optPriorities]
+  );
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
@@ -717,11 +756,11 @@ export default function App() {
   }
 
   function handleRunOptimizer() {
-    const built = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates);
+    const built = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates, undefined, { weights: optWeights });
     // The construction passes commit each task once and never look back —
     // follow with a local search that goes over the result and keeps
     // applying relocations/swaps while any of them improves it.
-    const { tasks: improved } = improveAssignment(built, staffDB, selectedDate, distanceResolver, windowDates);
+    const { tasks: improved } = improveAssignment(built, staffDB, selectedDate, distanceResolver, windowDates, { weights: optWeights });
     setTasksDB(improved);
   }
 
@@ -736,7 +775,6 @@ export default function App() {
   }
 
   function handleApplyDelays(delayMap) {
-    const delayedIds = Object.keys(delayMap).filter(id => (delayMap[id] ?? 0) > 0);
     const updated = tasksDB.map(t => {
       const minutes = delayMap[t.id] ?? 0;
       return {
@@ -746,59 +784,56 @@ export default function App() {
       };
     });
 
-    if (delayedIds.length === 0) {
+    // What actually changed, and the earliest moment it touches: anything that
+    // starts before that stays exactly as assigned, whoever it belongs to.
+    // TODO: once live data loads automatically, use the real wall-clock time
+    // as that cutoff instead of a per-delay marker.
+    const changes = [];
+    let earliest = Infinity;
+    updated.forEach((t, i) => {
+      const old = tasksDB[i];
+      if (t.start.getTime() === old.start.getTime() && t.end.getTime() === old.end.getTime()) return;
+      changes.push({ id: t.id, start: t.start, end: t.end });
+      earliest = Math.min(earliest, old.start.getTime(), t.start.getTime());
+    });
+    if (changes.length === 0) {
       setTasksDB(updated);
       return;
     }
 
-    // A delay can open up a better overall arrangement, not just conflicts
-    // for the one person it was on — so re-search the future pool, not just
-    // that one task. "Future" here means at-or-after the earliest of the
-    // delayed tasks' new start times: anything that would already have
-    // started before that stays exactly as assigned, whoever it belongs to.
-    // TODO: once live data loads automatically, use the real wall-clock
-    // time as that cutoff instead of a per-delay marker.
-    const now = new Date(Math.min(
-      ...delayedIds.map(id => updated.find(t => t.id === id).start.getTime())
-    ));
-    const stabilityEnd = new Date(now.getTime() + DELAY_STABILITY_WINDOW_MS);
+    // Same engine a backend would call for a batch of task changes. A delay
+    // can open up a better arrangement for people other than the one it hit,
+    // so here (unlike a purely incremental update) everything past the
+    // stability window is fully re-optimized and the whole pool is searched;
+    // inside the window only what's actually broken gets touched.
+    const now = new Date(earliest);
+    const { tasks: resolved, repairs } = applyChanges(
+      tasksDB, staffDB, selectedDate, distanceResolver, windowDates, changes,
+      {
+        now,
+        frozenWindowMs: DELAY_FROZEN_WINDOW_MS,
+        stabilityWindowMs: DELAY_STABILITY_WINDOW_MS,
+        farReshuffle: true,
+        weights: optWeights,
+      }
+    );
 
-    // Step 1: full free re-optimization, but only for the far side of the
-    // stability window — nothing inside [now, stabilityEnd) moves here,
-    // however much "better" some other arrangement for it might look.
-    let resolved = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates, stabilityEnd);
-
-    // Step 2: inside the stability window itself, fix only what's actually
-    // broken (a task that now genuinely overlaps/collides with another of
-    // the same employee's) — one task moves to cover it, nobody else in
-    // that window is touched just because a nicer fit might exist for them.
-    const { tasks: patched, changes } = patchConflicts(resolved, staffDB, selectedDate, distanceResolver, windowDates, now, stabilityEnd);
-    resolved = patched;
-    for (const c of changes) {
+    for (const c of repairs) {
       if (c.backlog) {
-        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников в ближайшие 3ч нет даже с перетасовкой, задача возвращена в бэклог`);
+        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников нет даже с перетасовкой, задача возвращена в бэклог`);
       } else if (c.viaBump) {
         message.info(`«${c.taskName}»: подвинута с ${c.from} на ${c.to}, чтобы освободить место для задачи из-за задержки`);
       } else {
-        message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт в ближайшие 3ч)`);
+        message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт)`);
       }
     }
 
-    // Step 3: with that settled, go back over everything past the hard-frozen
-    // first hour looking for better arrangements — tasks inside the stability
-    // window are searched first, the far side after, so near-term settles
-    // before far-term gets polished.
     const frozenUntil = new Date(now.getTime() + DELAY_FROZEN_WINDOW_MS);
-    resolved = improveAssignment(resolved, staffDB, selectedDate, distanceResolver, windowDates, {
-      frozenBefore: frozenUntil,
-      priorityUntil: stabilityEnd,
-    }).tasks;
-
     const movedCount = resolved.filter(t => {
-      const before = updated.find(u => u.id === t.id);
+      const before = tasksDB.find(u => u.id === t.id);
       return before && before.employee !== t.employee;
     }).length;
-    if (movedCount > changes.length) {
+    if (movedCount > repairs.length) {
       message.info(`Задержка применена — перераспределено ${movedCount} задач(и) в расписании после ${fmtTime(frozenUntil)}`);
     }
 
@@ -861,7 +896,7 @@ export default function App() {
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, selectedDate, setSelectedDate,
-    handleRunOptimizer, handleResetBacklog,
+    handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   };
 
