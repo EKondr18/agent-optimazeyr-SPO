@@ -174,6 +174,54 @@ function mergeStaffWindow(staffDB, dates) {
   return [...map.values()];
 }
 
+// Recursively searches for SOME way to place `task` onto a qualified,
+// in-shift employee — directly if someone's free, or by chaining through
+// as many bumps as it takes (displacing one person's own non-locked
+// conflicting task onto someone else, whose own conflict may itself need
+// bumping, and so on) rather than giving up after a single hop. Not capped
+// at "3 people" or any fixed hop count — it keeps going through whoever's
+// left in the pool as long as it's still making progress. `visited` guards
+// against cycles (an employee already being "opened up" earlier in this
+// same chain is skipped rather than revisited), so the search always
+// terminates — at most once per employee in the pool, however long the
+// chain gets. Returns { assigned, migrations } on success (an updated
+// assignment map plus the ordered list of {task, to} moves that produced
+// it) or null if no placement exists anywhere in the chain.
+function findChainPlacement(task, staffByLoad, assigned, resolver, visited) {
+  for (const s of staffByLoad) {
+    if (visited.has(s.name)) continue;
+    if (!hasAllQuals(s.quals, task)) continue;
+    if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
+
+    const empTasks = assigned[s.name] || [];
+    const conflicts = empTasks.filter(ct => conflictsWith(ct, task, resolver));
+
+    if (conflicts.length === 0) {
+      return { assigned: { ...assigned, [s.name]: [...empTasks, task] }, migrations: [{ task, to: s.name }] };
+    }
+    if (conflicts.some(ct => ct.isLocked)) continue;
+
+    visited.add(s.name);
+    let working = { ...assigned, [s.name]: empTasks.filter(t => !conflicts.includes(t)) };
+    const chainMigrations = [];
+    let ok = true;
+    for (const conflict of conflicts) {
+      const sub = findChainPlacement(conflict, staffByLoad, working, resolver, visited);
+      if (!sub) { ok = false; break; }
+      working = sub.assigned;
+      chainMigrations.push(...sub.migrations);
+    }
+    visited.delete(s.name);
+
+    if (ok) {
+      working = { ...working, [s.name]: [...(working[s.name] || []), task] };
+      chainMigrations.push({ task, to: s.name });
+      return { assigned: working, migrations: chainMigrations };
+    }
+  }
+  return null;
+}
+
 // Minimal-disruption repair for a near-term "stability window" — a
 // dispatcher shouldn't see someone's near-future assignment change just
 // because a FULL re-optimization found a marginally nicer fit somewhere.
@@ -190,7 +238,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return { tasks: result, changes: [] };
 
-  const assignedTasks = {};
+  let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
   for (const t of result) {
     if (dates.includes(t.date) && t.employee !== 'Не назначено') {
@@ -227,57 +275,31 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
     }
 
     // Pass Bump: no one is free outright, but the task MUST land somewhere
-    // rather than fall to the backlog — try displacing a candidate's own
-    // (non-locked) conflicting task to a third, free employee, so the
-    // broken task can take that freed slot. One rotation, not a deep chain:
-    // moves at most a couple of other people's tasks, each itself still
-    // fully conflict-checked, so nothing gets silently double-booked in
-    // the process. Tried before relaxing the shift-end boundary below,
-    // same precedence as runOptimizer's own PASS 2 vs PASS 3.
+    // rather than fall to the backlog — chain through as many displacements
+    // as it takes (see findChainPlacement), not just one hop. Tried before
+    // relaxing the shift-end boundary below, same precedence as
+    // runOptimizer's own PASS 2 vs PASS 3.
+    let viaChain = false;
     if (!bestStaff) {
       const staffByLoad = [...staff].sort(
         (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
       );
-      for (const s of staffByLoad) {
-        if (s.name === currentEmp) continue;
-        if (!hasAllQuals(s.quals, task)) continue;
-        if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-
-        const conflicts = (assignedTasks[s.name] || []).filter(ct => conflictsWith(ct, task, resolver));
-        if (conflicts.length === 0 || conflicts.some(ct => ct.isLocked)) continue;
-
-        const tempAssigned = Object.fromEntries(Object.entries(assignedTasks).map(([k, v]) => [k, [...v]]));
-        const migrations = [];
-        let allMoved = true;
-        for (const conflict of conflicts) {
-          let moved = false;
-          for (const alt of staffByLoad) {
-            if (alt.name === s.name || alt.name === currentEmp) continue;
-            if (!hasAllQuals(alt.quals, conflict)) continue;
-            if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;
-            if (!hasConflict(tempAssigned[alt.name] || [], conflict, resolver)) {
-              migrations.push({ task: conflict, from: s.name, to: alt.name });
-              tempAssigned[s.name] = tempAssigned[s.name].filter(t => t.id !== conflict.id);
-              if (!tempAssigned[alt.name]) tempAssigned[alt.name] = [];
-              tempAssigned[alt.name].push(conflict);
-              moved = true; break;
-            }
-          }
-          if (!moved) { allMoved = false; break; }
+      const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set());
+      if (chain) {
+        // chain.assigned already reflects the FULL outcome (the broken
+        // task included) — the shared commit below must only update
+        // `result`/`changes` for it, not push into assignedTasks again.
+        assignedTasks = chain.assigned;
+        // Every migration except the last one (the broken task itself,
+        // handled by the shared commit below) is a knock-on displacement.
+        for (const { task: mt, to } of chain.migrations.slice(0, -1)) {
+          const midx = result.findIndex(t => t.id === mt.id);
+          const from = result[midx].employee;
+          result[midx] = { ...result[midx], employee: to };
+          changes.push({ taskId: mt.id, taskName: mt.name, from, to, backlog: false, viaBump: true });
         }
-
-        if (allMoved) {
-          for (const { task: mt, from, to } of migrations) {
-            const midx = result.findIndex(t => t.id === mt.id);
-            result[midx] = { ...result[midx], employee: to };
-            assignedTasks[from] = assignedTasks[from].filter(t => t.id !== mt.id);
-            if (!assignedTasks[to]) assignedTasks[to] = [];
-            assignedTasks[to].push(result[midx]);
-            changes.push({ taskId: mt.id, taskName: mt.name, from, to, backlog: false, viaBump: true });
-          }
-          bestStaff = s;
-          break;
-        }
+        bestStaff = { name: chain.migrations[chain.migrations.length - 1].to };
+        viaChain = true;
       }
     }
 
@@ -297,9 +319,17 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
     const idx = result.findIndex(t => t.id === task.id);
     if (bestStaff) {
       result[idx] = { ...result[idx], employee: bestStaff.name };
-      if (!assignedTasks[bestStaff.name]) assignedTasks[bestStaff.name] = [];
-      assignedTasks[bestStaff.name].push(result[idx]);
-      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: bestStaff.name, backlog: false });
+      if (!viaChain) {
+        if (!assignedTasks[bestStaff.name]) assignedTasks[bestStaff.name] = [];
+        assignedTasks[bestStaff.name].push(result[idx]);
+      }
+      // A chain can resolve by bumping everyone ELSE out of the way and
+      // leaving the originally-broken task right where it was — a real
+      // outcome, but "moved from S1 to S1" would be a confusing thing to
+      // show the dispatcher, so only log an actual move.
+      if (bestStaff.name !== currentEmp) {
+        changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: bestStaff.name, backlog: false });
+      }
     } else {
       result[idx] = { ...result[idx], employee: 'Не назначено' };
       changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: null, backlog: true });
