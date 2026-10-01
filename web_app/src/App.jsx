@@ -15,7 +15,7 @@ import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
-import { runOptimizer, patchConflicts, findConflicts, hasAllQuals } from './optimizer';
+import { runOptimizer, patchConflicts, improveAssignment, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -33,6 +33,11 @@ const GANTT_WINDOW_DAYS = 3;
 // because a fuller re-optimization would prefer someone else. Beyond it,
 // full re-optimization is free to pick whatever's genuinely best.
 const DELAY_STABILITY_WINDOW_MS = 3 * 3600000;
+// Tasks starting within this long of "now" are hard-frozen for the
+// improvement search after a delay (only the conflict repair above may touch
+// them, and only when genuinely broken). From here to the stability window's
+// end the search works hardest; beyond it, it polishes whatever's left.
+const DELAY_FROZEN_WINDOW_MS = 3600000;
 
 function fmtTime(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -712,8 +717,12 @@ export default function App() {
   }
 
   function handleRunOptimizer() {
-    const updated = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates);
-    setTasksDB(updated);
+    const built = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates);
+    // The construction passes commit each task once and never look back —
+    // follow with a local search that goes over the result and keeps
+    // applying relocations/swaps while any of them improves it.
+    const { tasks: improved } = improveAssignment(built, staffDB, selectedDate, distanceResolver, windowDates);
+    setTasksDB(improved);
   }
 
   function handleResetBacklog() {
@@ -775,12 +784,22 @@ export default function App() {
       }
     }
 
+    // Step 3: with that settled, go back over everything past the hard-frozen
+    // first hour looking for better arrangements — tasks inside the stability
+    // window are searched first, the far side after, so near-term settles
+    // before far-term gets polished.
+    const frozenUntil = new Date(now.getTime() + DELAY_FROZEN_WINDOW_MS);
+    resolved = improveAssignment(resolved, staffDB, selectedDate, distanceResolver, windowDates, {
+      frozenBefore: frozenUntil,
+      priorityUntil: stabilityEnd,
+    }).tasks;
+
     const movedCount = resolved.filter(t => {
       const before = updated.find(u => u.id === t.id);
       return before && before.employee !== t.employee;
     }).length;
     if (movedCount > changes.length) {
-      message.info(`Задержка применена — пересчитано ${movedCount} задач(и) дальше ${fmtTime(stabilityEnd)}`);
+      message.info(`Задержка применена — перераспределено ${movedCount} задач(и) в расписании после ${fmtTime(frozenUntil)}`);
     }
 
     setTasksDB(resolved);

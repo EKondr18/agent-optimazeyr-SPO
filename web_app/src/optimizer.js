@@ -339,6 +339,156 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
   return { tasks: result, changes };
 }
 
+// One employee's total walking cost for the day: their shift's base point to
+// the first task, then each task's exit point to the next one's entry point.
+// Overlapping (complementary same-flight) tasks need no travel between them,
+// same convention MetricsSummary uses for its average-transition metric.
+function routeCost(staffMember, empTasks, resolver) {
+  const sorted = [...empTasks].sort((a, b) => a.start - b.start);
+  let cost = 0;
+  let prev = null;
+  for (const t of sorted) {
+    const entry = t.entryPos ?? t.pos;
+    if (prev === null) {
+      if (staffMember.basePos) cost += posDist(staffMember.basePos, entry, resolver);
+    } else if (t.start >= prev.end) {
+      cost += posDist(prev.exitPos ?? prev.pos, entry, resolver);
+    }
+    prev = t;
+  }
+  return cost;
+}
+
+// Local-search improvement pass, run AFTER the constructive passes (greedy +
+// rotation + relaxation) have produced a valid assignment. The construction
+// commits each task once and never looks back; this goes back over what it
+// built and keeps applying whichever single move helps most — relocating one
+// task to another employee, or swapping two tasks between two employees —
+// until no move improves anything. Every candidate move is checked with the
+// exact same rules the construction uses (qualifications, shift bounds,
+// conflicts incl. travel feasibility), so it can only ever produce another
+// valid assignment, never trade correctness for a nicer number.
+//
+// "Better" is lexicographic, matching the construction's own priority: first
+// how evenly work is spread (sum of squared loads), then total walking
+// distance. A relocation only counts if it improves the first, or ties it and
+// improves the second; a swap never changes loads, so it competes on walking
+// distance alone. Each accepted move strictly improves that pair, so the
+// search always terminates on its own — no time or iteration cap needed.
+//
+// Horizon (both optional Dates): tasks starting before `frozenBefore` — and
+// locked ones — never move (they still count for conflicts and distances).
+// With `priorityUntil`, tasks starting before it are searched to convergence
+// FIRST, then the rest of the movable pool gets its turn — near-term
+// arrangements get settled before far-term ones are polished.
+export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, { frozenBefore, priorityUntil } = {}) {
+  const result = tasks.map(t => ({ ...t }));
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const staff = mergeStaffWindow(staffDB, dates);
+  if (staff.length === 0) return { tasks: result, moves: 0 };
+
+  const shiftsByName = new Map();
+  for (const s of staff) {
+    if (!shiftsByName.has(s.name)) shiftsByName.set(s.name, []);
+    shiftsByName.get(s.name).push(s);
+  }
+  const indexById = new Map(result.map((t, i) => [t.id, i]));
+
+  const byEmp = {};
+  for (const name of shiftsByName.keys()) byEmp[name] = [];
+  for (const t of result) {
+    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
+      if (!byEmp[t.employee]) byEmp[t.employee] = [];
+      byEmp[t.employee].push(t);
+    }
+  }
+
+  const isMovable = t =>
+    dates.includes(t.date) && !t.isLocked && t.employee !== 'Не назначено' &&
+    (!frozenBefore || t.start >= frozenBefore);
+  const phases = priorityUntil
+    ? [t => isMovable(t) && t.start < priorityUntil, isMovable]
+    : [isMovable];
+
+  // `empTasks` = what the employee would already have, WITHOUT this task.
+  const fits = (name, task, empTasks) => {
+    const shifts = shiftsByName.get(name);
+    if (!shifts) return false;
+    if (!shifts.some(s => hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.end <= s.shiftEnd)) return false;
+    return !hasConflict(empTasks, task, resolver);
+  };
+  const costOf = (name, empTasks) => routeCost(shiftsByName.get(name)?.[0] ?? {}, empTasks, resolver);
+  const EPS = 1e-6;
+  const isBetter = (m, best) =>
+    !best || m.dSq < best.dSq || (m.dSq === best.dSq && m.dDist < best.dDist);
+  const isImproving = m => m.dSq < 0 || (m.dSq === 0 && m.dDist < -EPS);
+  const reassign = (id, to) => {
+    const i = indexById.get(id);
+    result[i] = { ...result[i], employee: to };
+    return result[i];
+  };
+
+  let moves = 0;
+  for (const isMover of phases) {
+    let improved = true;
+    while (improved) {
+      improved = false;
+      const movers = result.filter(t => isMover(t));
+      for (const stale of movers) {
+        const task = result[indexById.get(stale.id)];
+        if (!isMover(task)) continue;
+        const A = task.employee;
+        const aTasks = byEmp[A];
+        const aRest = aTasks.filter(t => t.id !== task.id);
+        const costA = costOf(A, aTasks);
+
+        let best = null;
+
+        // Relocate `task` to another employee.
+        for (const B of shiftsByName.keys()) {
+          if (B === A) continue;
+          const bTasks = byEmp[B];
+          const dSq = (aTasks.length - 1) ** 2 + (bTasks.length + 1) ** 2 - aTasks.length ** 2 - bTasks.length ** 2;
+          if (dSq > 0) continue;
+          if (!fits(B, task, bTasks)) continue;
+          const dDist = costOf(A, aRest) + costOf(B, [...bTasks, task]) - costA - costOf(B, bTasks);
+          const move = { kind: 'relocate', B, dSq, dDist };
+          if (isImproving(move) && isBetter(move, best)) best = move;
+        }
+
+        // Swap `task` with a movable task of another employee.
+        for (const other of result) {
+          if (other.employee === A || !isMovable(other) || !byEmp[other.employee]) continue;
+          const B = other.employee;
+          const bTasks = byEmp[B];
+          const bRest = bTasks.filter(t => t.id !== other.id);
+          if (!fits(B, task, bRest) || !fits(A, other, aRest)) continue;
+          const dDist = costOf(A, [...aRest, other]) + costOf(B, [...bRest, task]) - costA - costOf(B, bTasks);
+          const move = { kind: 'swap', B, other, dSq: 0, dDist };
+          if (isImproving(move) && isBetter(move, best)) best = move;
+        }
+
+        if (!best) continue;
+        if (best.kind === 'relocate') {
+          const moved = reassign(task.id, best.B);
+          byEmp[A] = aRest;
+          byEmp[best.B] = [...byEmp[best.B], moved];
+        } else {
+          const bRest = byEmp[best.B].filter(t => t.id !== best.other.id);
+          const movedTask = reassign(task.id, best.B);
+          const movedOther = reassign(best.other.id, A);
+          byEmp[A] = [...aRest, movedOther];
+          byEmp[best.B] = [...bRest, movedTask];
+        }
+        moves++;
+        improved = true;
+      }
+    }
+  }
+
+  return { tasks: result, moves };
+}
+
 // windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
 // staff shifts from any date in this window are assignable together, since
 // shifts and tasks both routinely cross midnight. Defaults to just
