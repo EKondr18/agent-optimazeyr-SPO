@@ -15,7 +15,7 @@ import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
-import { runOptimizer, findConflicts, hasAllQuals } from './optimizer';
+import { runOptimizer, patchConflicts, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -28,6 +28,11 @@ const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 const { Text } = Typography;
 
 const GANTT_WINDOW_DAYS = 3;
+// After a delay, tasks starting within this long of "now" are a stability
+// window — only touched if they're actually broken, never reshuffled just
+// because a fuller re-optimization would prefer someone else. Beyond it,
+// full re-optimization is free to pick whatever's genuinely best.
+const DELAY_STABILITY_WINDOW_MS = 3 * 3600000;
 
 function fmtTime(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -738,23 +743,42 @@ export default function App() {
     }
 
     // A delay can open up a better overall arrangement, not just conflicts
-    // for the one person it was on — so re-search the whole future pool,
-    // not just that one task. "Future" here means at-or-after the earliest
-    // of the delayed tasks' new start times: anything that would already
-    // have started before that stays exactly as assigned, whoever it
-    // belongs to. TODO: once live data loads automatically, use the real
-    // wall-clock time as that cutoff instead of a per-delay marker.
-    const freezeBeforeTime = new Date(Math.min(
+    // for the one person it was on — so re-search the future pool, not just
+    // that one task. "Future" here means at-or-after the earliest of the
+    // delayed tasks' new start times: anything that would already have
+    // started before that stays exactly as assigned, whoever it belongs to.
+    // TODO: once live data loads automatically, use the real wall-clock
+    // time as that cutoff instead of a per-delay marker.
+    const now = new Date(Math.min(
       ...delayedIds.map(id => updated.find(t => t.id === id).start.getTime())
     ));
+    const stabilityEnd = new Date(now.getTime() + DELAY_STABILITY_WINDOW_MS);
 
-    const resolved = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates, freezeBeforeTime);
+    // Step 1: full free re-optimization, but only for the far side of the
+    // stability window — nothing inside [now, stabilityEnd) moves here,
+    // however much "better" some other arrangement for it might look.
+    let resolved = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates, stabilityEnd);
+
+    // Step 2: inside the stability window itself, fix only what's actually
+    // broken (a task that now genuinely overlaps/collides with another of
+    // the same employee's) — one task moves to cover it, nobody else in
+    // that window is touched just because a nicer fit might exist for them.
+    const { tasks: patched, changes } = patchConflicts(resolved, staffDB, selectedDate, distanceResolver, windowDates, now, stabilityEnd);
+    resolved = patched;
+    for (const c of changes) {
+      if (c.backlog) {
+        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников в ближайшие 3ч нет, задача возвращена в бэклог`);
+      } else {
+        message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт в ближайшие 3ч)`);
+      }
+    }
+
     const movedCount = resolved.filter(t => {
       const before = updated.find(u => u.id === t.id);
       return before && before.employee !== t.employee;
     }).length;
-    if (movedCount > 0) {
-      message.info(`Задержка применена — пересчитано ${movedCount} задач(и), начиная с ${fmtTime(freezeBeforeTime)}`);
+    if (movedCount > changes.length) {
+      message.info(`Задержка применена — пересчитано ${movedCount} задач(и) дальше ${fmtTime(stabilityEnd)}`);
     }
 
     setTasksDB(resolved);
