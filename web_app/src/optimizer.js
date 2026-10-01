@@ -174,6 +174,86 @@ function mergeStaffWindow(staffDB, dates) {
   return [...map.values()];
 }
 
+// Minimal-disruption repair for a near-term "stability window" — a
+// dispatcher shouldn't see someone's near-future assignment change just
+// because a FULL re-optimization found a marginally nicer fit somewhere.
+// Unlike runOptimizer (which resets and re-searches everything in scope),
+// this only ever touches a task that is ACTUALLY broken right now — one
+// that genuinely overlaps/collides with another task of the same employee
+// — and relocates just that one task, leaving every other assignment in
+// [scopeStart, scopeEnd) exactly as it was. Same scoring/fallback logic
+// runOptimizer's own passes use, just applied to a single task instead of
+// the whole pool.
+export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDates, scopeStart, scopeEnd) {
+  const result = tasks.map(t => ({ ...t }));
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const staff = mergeStaffWindow(staffDB, dates);
+  if (staff.length === 0) return { tasks: result, changes: [] };
+
+  const assignedTasks = {};
+  for (const s of staff) assignedTasks[s.name] = [];
+  for (const t of result) {
+    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
+      if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
+      assignedTasks[t.employee].push(t);
+    }
+  }
+
+  const inScope = t =>
+    dates.includes(t.date) && !t.isLocked && t.start >= scopeStart && t.start < scopeEnd;
+  const changes = [];
+
+  for (const task of result) {
+    if (!inScope(task) || task.employee === 'Не назначено') continue;
+
+    const currentEmp = task.employee;
+    const empTasks = (assignedTasks[currentEmp] || []).filter(t => t.id !== task.id);
+    if (!empTasks.some(t => conflictsWith(t, task, resolver))) continue;
+
+    assignedTasks[currentEmp] = empTasks;
+
+    // Pass A: best-scoring qualified employee, in shift, no conflicts.
+    let bestStaff = null, bestScore = null;
+    for (const s of staff) {
+      if (s.name === currentEmp) continue;
+      if (!hasAllQuals(s.quals, task)) continue;
+      if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
+      if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
+      const score = scoreEmployee(s, assignedTasks, task, resolver);
+      if (!bestScore || score.load < bestScore.load ||
+          (score.load === bestScore.load && score.dist < bestScore.dist)) {
+        bestScore = score; bestStaff = s;
+      }
+    }
+
+    // Pass B: relax only the shift END boundary, same as runOptimizer's own.
+    if (!bestStaff) {
+      let bestLoad = Infinity;
+      for (const s of staff) {
+        if (s.name === currentEmp) continue;
+        if (!hasAllQuals(s.quals, task)) continue;
+        if (s.shiftStart > task.start || task.start > s.shiftEnd) continue;
+        if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
+        const load = (assignedTasks[s.name] || []).length;
+        if (load < bestLoad) { bestLoad = load; bestStaff = s; }
+      }
+    }
+
+    const idx = result.findIndex(t => t.id === task.id);
+    if (bestStaff) {
+      result[idx] = { ...result[idx], employee: bestStaff.name };
+      if (!assignedTasks[bestStaff.name]) assignedTasks[bestStaff.name] = [];
+      assignedTasks[bestStaff.name].push(result[idx]);
+      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: bestStaff.name, backlog: false });
+    } else {
+      result[idx] = { ...result[idx], employee: 'Не назначено' };
+      changes.push({ taskId: task.id, taskName: task.name, from: currentEmp, to: null, backlog: true });
+    }
+  }
+
+  return { tasks: result, changes };
+}
+
 // windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
 // staff shifts from any date in this window are assignable together, since
 // shifts and tasks both routinely cross midnight. Defaults to just
