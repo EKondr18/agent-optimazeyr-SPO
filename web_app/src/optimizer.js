@@ -364,7 +364,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return result;
 
-  const assignedTasks = {};
+  let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
 
   // Pre-load frozen (locked, or already-started) tasks into the assignment
@@ -418,65 +418,28 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   }
 
   // ── PASS 2: Rotation – relocate conflicting tasks to free up a slot ──────
-  // Try least-loaded staff first (recomputed per task, since assignments
-  // shift as tasks get placed) — the previous fixed staff-array order let
-  // whoever came first alphabetically/positionally soak up every task that
-  // fell through to this pass.
+  // Chains through as many displacements as it takes (see
+  // findChainPlacement below), not just one hop — a task only falls
+  // through to PASS 3 if genuinely nobody in the pool, however rearranged,
+  // can fit it. Least-loaded staff tried first (recomputed per task, since
+  // assignments shift as tasks get placed) so whoever comes first
+  // alphabetically/positionally doesn't soak up every task that falls
+  // through to this pass.
   let remaining = [];
   for (const task of backlog) {
-    let resolved = false;
     const staffByLoad = [...staff].sort(
       (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
     );
-    for (const s of staffByLoad) {
-      if (resolved) break;
-      if (!hasAllQuals(s.quals, task)) continue;
-      if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
-
-      const empTasks = assignedTasks[s.name] || [];
-      const conflicts = empTasks.filter(ct => conflictsWith(ct, task, resolver));
-
-      if (conflicts.length === 0) {
-        commit(result, assignedTasks, task.id, s.name);
-        resolved = true; break;
+    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set());
+    if (chain) {
+      assignedTasks = chain.assigned;
+      for (const { task: mt, to } of chain.migrations) {
+        const idx = result.findIndex(t => t.id === mt.id);
+        result[idx] = { ...result[idx], employee: to };
       }
-      if (conflicts.some(ct => ct.isLocked)) continue;
-
-      // Try to move every conflict to an alternate employee
-      const migrations = [];
-      let allMoved = true;
-      const tempAssigned = Object.fromEntries(
-        Object.entries(assignedTasks).map(([k, v]) => [k, [...v]])
-      );
-      for (const conflict of conflicts) {
-        let moved = false;
-        for (const alt of staffByLoad) {
-          if (alt.name === s.name) continue;
-          if (!hasAllQuals(alt.quals, conflict)) continue;
-          if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;
-          if (!hasConflict(tempAssigned[alt.name] || [], conflict, resolver)) {
-            migrations.push({ task: conflict, from: s.name, to: alt.name });
-            tempAssigned[s.name] = tempAssigned[s.name].filter(t => t.id !== conflict.id);
-            if (!tempAssigned[alt.name]) tempAssigned[alt.name] = [];
-            tempAssigned[alt.name].push(conflict);
-            moved = true; break;
-          }
-        }
-        if (!moved) { allMoved = false; break; }
-      }
-      if (allMoved) {
-        for (const { task: mt, from, to } of migrations) {
-          const idx = result.findIndex(t => t.id === mt.id);
-          result[idx] = { ...result[idx], employee: to };
-          assignedTasks[from] = assignedTasks[from].filter(t => t.id !== mt.id);
-          if (!assignedTasks[to]) assignedTasks[to] = [];
-          assignedTasks[to].push(result[idx]);
-        }
-        commit(result, assignedTasks, task.id, s.name);
-        resolved = true;
-      }
+    } else {
+      remaining.push(task);
     }
-    if (!resolved) remaining.push(task);
   }
 
   // ── PASS 3: Relax shift constraint (finish slightly late) ─────────────────
