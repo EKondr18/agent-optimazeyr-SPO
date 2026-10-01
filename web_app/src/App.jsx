@@ -15,7 +15,7 @@ import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
-import { runOptimizer, reassignDelayedConflicts, findConflicts, hasAllQuals } from './optimizer';
+import { runOptimizer, findConflicts, hasAllQuals } from './optimizer';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -203,7 +203,7 @@ function SidebarContent({
   manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
-  availableDates, selectedDate, setSelectedDate, setOptimizerRan,
+  availableDates, selectedDate, setSelectedDate,
   handleRunOptimizer, handleResetBacklog,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   onClose,
@@ -345,7 +345,7 @@ function SidebarContent({
             <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Дата смены</Text>
             <Select
               value={selectedDate}
-              onChange={val => { setSelectedDate(val); setOptimizerRan(false); }}
+              onChange={setSelectedDate}
               style={{ width: '100%' }}
               options={availableDates.map(d => ({ value: d, label: d }))}
             />
@@ -418,7 +418,6 @@ export default function App() {
   const [colorMap, setColorMap] = useState({});
   const [fullRoster, setFullRoster] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
-  const [optimizerRan, setOptimizerRan] = useState(false);
   const [filterTypes, setFilterTypes] = useState([]);
   const [filterFlight, setFilterFlight] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -571,7 +570,6 @@ export default function App() {
     setSelectedDate(dates[0]);
     setFilterTypes(types);
     setFilterFlight('');
-    setOptimizerRan(false);
   }
 
   function loadData(text) {
@@ -711,7 +709,6 @@ export default function App() {
   function handleRunOptimizer() {
     const updated = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates);
     setTasksDB(updated);
-    setOptimizerRan(true);
   }
 
   function handleResetBacklog() {
@@ -722,12 +719,11 @@ export default function App() {
           : t
       )
     );
-    setOptimizerRan(false);
   }
 
   function handleApplyDelays(delayMap) {
     const delayedIds = Object.keys(delayMap).filter(id => (delayMap[id] ?? 0) > 0);
-    let updated = tasksDB.map(t => {
+    const updated = tasksDB.map(t => {
       const minutes = delayMap[t.id] ?? 0;
       return {
         ...t,
@@ -736,18 +732,32 @@ export default function App() {
       };
     });
 
-    const { tasks: resolved, changes } = reassignDelayedConflicts(updated, staffDB, selectedDate, delayedIds, distanceResolver, windowDates);
-    updated = resolved;
-    for (const c of changes) {
-      if (c.backlog) {
-        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой закреплённой задачей — свободных сотрудников нет, задача возвращена в бэклог`);
-      } else {
-        message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт с закреплённой задачей)`);
-      }
+    if (delayedIds.length === 0) {
+      setTasksDB(updated);
+      return;
     }
 
-    if (optimizerRan) updated = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates);
-    setTasksDB(updated);
+    // A delay can open up a better overall arrangement, not just conflicts
+    // for the one person it was on — so re-search the whole future pool,
+    // not just that one task. "Future" here means at-or-after the earliest
+    // of the delayed tasks' new start times: anything that would already
+    // have started before that stays exactly as assigned, whoever it
+    // belongs to. TODO: once live data loads automatically, use the real
+    // wall-clock time as that cutoff instead of a per-delay marker.
+    const freezeBeforeTime = new Date(Math.min(
+      ...delayedIds.map(id => updated.find(t => t.id === id).start.getTime())
+    ));
+
+    const resolved = runOptimizer(updated, staffDB, selectedDate, distanceResolver, windowDates, freezeBeforeTime);
+    const movedCount = resolved.filter(t => {
+      const before = updated.find(u => u.id === t.id);
+      return before && before.employee !== t.employee;
+    }).length;
+    if (movedCount > 0) {
+      message.info(`Задержка применена — пересчитано ${movedCount} задач(и), начиная с ${fmtTime(freezeBeforeTime)}`);
+    }
+
+    setTasksDB(resolved);
   }
 
   function handleAssign(taskId, employeeName, lock) {
@@ -805,7 +815,7 @@ export default function App() {
     manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
-    availableDates, selectedDate, setSelectedDate, setOptimizerRan,
+    availableDates, selectedDate, setSelectedDate,
     handleRunOptimizer, handleResetBacklog,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   };
