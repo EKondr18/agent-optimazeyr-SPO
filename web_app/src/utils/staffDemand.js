@@ -13,7 +13,7 @@
 // This is a greedy heuristic (first-fit, chronological order), not a
 // guaranteed-minimum solve — good enough for a planning estimate, same
 // spirit as the optimizer's own pass-based heuristic.
-import { hasAllQuals } from '../optimizer';
+import { hasAllQuals } from '../optimizer.js';
 
 export const GRANULARITY_OPTIONS = [
   { label: '5 мин', value: 5 },

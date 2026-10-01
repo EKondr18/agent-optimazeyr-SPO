@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-export { getPosDistance } from './posDistance';
+export { getPosDistance } from './posDistance.js';
 
 const COLOR_PALETTE = [
   '#1F77B4', '#9467BD', '#FF9900', '#E6A800', '#2CA02C',
