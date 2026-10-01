@@ -226,6 +226,61 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
       }
     }
 
+    // Pass Bump: no one is free outright, but the task MUST land somewhere
+    // rather than fall to the backlog — try displacing a candidate's own
+    // (non-locked) conflicting task to a third, free employee, so the
+    // broken task can take that freed slot. One rotation, not a deep chain:
+    // moves at most a couple of other people's tasks, each itself still
+    // fully conflict-checked, so nothing gets silently double-booked in
+    // the process. Tried before relaxing the shift-end boundary below,
+    // same precedence as runOptimizer's own PASS 2 vs PASS 3.
+    if (!bestStaff) {
+      const staffByLoad = [...staff].sort(
+        (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
+      );
+      for (const s of staffByLoad) {
+        if (s.name === currentEmp) continue;
+        if (!hasAllQuals(s.quals, task)) continue;
+        if (s.shiftStart > task.start || task.end > s.shiftEnd) continue;
+
+        const conflicts = (assignedTasks[s.name] || []).filter(ct => conflictsWith(ct, task, resolver));
+        if (conflicts.length === 0 || conflicts.some(ct => ct.isLocked)) continue;
+
+        const tempAssigned = Object.fromEntries(Object.entries(assignedTasks).map(([k, v]) => [k, [...v]]));
+        const migrations = [];
+        let allMoved = true;
+        for (const conflict of conflicts) {
+          let moved = false;
+          for (const alt of staffByLoad) {
+            if (alt.name === s.name || alt.name === currentEmp) continue;
+            if (!hasAllQuals(alt.quals, conflict)) continue;
+            if (alt.shiftStart > conflict.start || conflict.end > alt.shiftEnd) continue;
+            if (!hasConflict(tempAssigned[alt.name] || [], conflict, resolver)) {
+              migrations.push({ task: conflict, from: s.name, to: alt.name });
+              tempAssigned[s.name] = tempAssigned[s.name].filter(t => t.id !== conflict.id);
+              if (!tempAssigned[alt.name]) tempAssigned[alt.name] = [];
+              tempAssigned[alt.name].push(conflict);
+              moved = true; break;
+            }
+          }
+          if (!moved) { allMoved = false; break; }
+        }
+
+        if (allMoved) {
+          for (const { task: mt, from, to } of migrations) {
+            const midx = result.findIndex(t => t.id === mt.id);
+            result[midx] = { ...result[midx], employee: to };
+            assignedTasks[from] = assignedTasks[from].filter(t => t.id !== mt.id);
+            if (!assignedTasks[to]) assignedTasks[to] = [];
+            assignedTasks[to].push(result[midx]);
+            changes.push({ taskId: mt.id, taskName: mt.name, from, to, backlog: false, viaBump: true });
+          }
+          bestStaff = s;
+          break;
+        }
+      }
+    }
+
     // Pass B: relax only the shift END boundary, same as runOptimizer's own.
     if (!bestStaff) {
       let bestLoad = Infinity;

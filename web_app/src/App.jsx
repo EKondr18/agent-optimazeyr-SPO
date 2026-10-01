@@ -767,7 +767,9 @@ export default function App() {
     resolved = patched;
     for (const c of changes) {
       if (c.backlog) {
-        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников в ближайшие 3ч нет, задача возвращена в бэклог`);
+        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников в ближайшие 3ч нет даже с перетасовкой, задача возвращена в бэклог`);
+      } else if (c.viaBump) {
+        message.info(`«${c.taskName}»: подвинута с ${c.from} на ${c.to}, чтобы освободить место для задачи из-за задержки`);
       } else {
         message.info(`«${c.taskName}»: из-за задержки переназначена с ${c.from} на ${c.to} (конфликт в ближайшие 3ч)`);
       }
