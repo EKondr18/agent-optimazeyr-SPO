@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  runOptimizer, patchConflicts, improveAssignment, applyChanges,
+  runOptimizer, patchConflicts, improveAssignment, applyChanges, assignmentCost,
   conflictsWith, hasAllQuals, DEFAULT_WEIGHTS,
 } from '../src/optimizer.js';
 
@@ -183,4 +183,48 @@ test('a thin hand-off margin is penalized only while the slack weight is on', ()
   assert.notEqual(empOf(on.tasks, 'a'), empOf(on.tasks, 'b')); // either one may be the one that moves
   const off = improveAssignment(tasks(), db(...people), DATE, null, WIN, { weights: { slack: 0 } });
   assert.equal(off.moves, 0);
+});
+
+test('improveAssignment never raises the weighted cost, and agrees with a full recomputation', () => {
+  // A messy hand-built assignment: mixed stands, base points, a short shift
+  // (overtime), tight hand-offs — every cost term is in play.
+  const people = [
+    person('S1', ['Q1'], 6, 12, 'POS10'), person('S2', ['Q1'], 6, 20, 'POS50'), person('S3', ['Q1'], 8, 20, 'POS30'),
+  ];
+  const stands = ['POS10', 'POS50', 'POS30', 'POS12', 'POS48'];
+  const tasks = Array.from({ length: 12 }, (_, i) =>
+    mk('m' + i, 7 + Math.floor(i * 0.9), (i * 17) % 40, 7 + Math.floor(i * 0.9), ((i * 17) % 40) + 20, 'Q1',
+      people[i % 3].name, stands[i % stands.length]));
+  const before = assignmentCost(tasks, db(...people), DATE, null, WIN);
+  const r = improveAssignment(tasks, db(...people), DATE, null, WIN);
+  const after = assignmentCost(r.tasks, db(...people), DATE, null, WIN);
+  assert.ok(after <= before + 1e-9, `cost went ${before} -> ${after}`);
+  assert.ok(r.moves === 0 || after < before, 'moves must strictly lower the cost');
+  assert.equal(violations(r.tasks, people), 0);
+});
+
+import { resolveStaffingWithCallIns } from '../src/utils/staffingGap.js';
+
+test('call-in plan: extends a nearby shift, calls in an off-duty person, reports the impossible', () => {
+  const s1 = { name: 'S1', quals: ['Q_AC'], shiftStart: D(8), shiftEnd: D(16), basePos: 'POS1' };
+  const tasks = [mk('t1', 16, 30, 17, 0, 'Q_AC'), mk('t2', 20, 0, 20, 30, 'Q_OTHER'), mk('t3', 22, 0, 22, 30, 'Q_NONE')];
+  const r = resolveStaffingWithCallIns({
+    tasksDB: tasks, staffDB: db(s1), targetDate: DATE, windowDates: WIN,
+    fullRoster: [{ name: 'P2', quals: ['Q_OTHER'] }], allShiftsByPerson: new Map(), distanceResolver: null,
+  });
+  assert.equal(empOf(r.tasks, 't1'), 'S1');
+  assert.equal(empOf(r.tasks, 't2'), 'P2');
+  assert.equal(r.unresolved.length, 1);
+  assert.deepEqual(r.actions.map(a => a.type).sort(), ['callin', 'extend']);
+});
+
+test('call-in plan: one call-in covers a task the existing staff could not', () => {
+  const s1 = { name: 'S1', quals: ['Q1', 'Q2'], shiftStart: D(8), shiftEnd: D(16), basePos: 'POS1' };
+  const tasks = [mk('a', 9, 0, 9, 30, 'Q1'), mk('b', 9, 0, 9, 30, 'Q1'), mk('c', 12, 0, 12, 30, 'Q2')];
+  const r = resolveStaffingWithCallIns({
+    tasksDB: tasks, staffDB: db(s1), targetDate: DATE, windowDates: WIN,
+    fullRoster: [{ name: 'P2', quals: ['Q1', 'Q2'] }], allShiftsByPerson: new Map(), distanceResolver: null,
+  });
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.unresolved.length, 0);
 });
