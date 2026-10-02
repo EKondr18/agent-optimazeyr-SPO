@@ -654,7 +654,9 @@ export default function App() {
     setStaffDB(db);
     setColorMap(cm);
     setFullRoster(roster || []);
-    setSelectedDate(dates[0]);
+    // Open on the first day that has both tasks and shifts — the first task
+    // date alone may have nobody on shift, which leaves the optimizer idle.
+    setSelectedDate(dates.find(d => (db[d] || []).length > 0) ?? dates[0]);
     setFilterTypes(types);
     setFilterFlight('');
   }
@@ -838,6 +840,15 @@ export default function App() {
 
   async function handleRunOptimizer() {
     if (busy) return;
+    const windowHasStaff = windowDates.some(d => (staffDB[d] || []).length > 0);
+    if (!windowHasStaff) {
+      const withStaff = availableDates.filter(d => (staffDB[d] || []).length > 0);
+      message.warning(
+        `На ${selectedDate} (и соседние дни окна) нет смен — распределять некому.` +
+        (withStaff.length ? ` Смены есть на: ${withStaff.join(', ')}. Выберите одну из этих дат.` : ' В загруженных данных вообще нет смен СПО.')
+      );
+      return;
+    }
     setBusy(true);
     try {
       // The construction passes commit each task once and never look back —
@@ -847,6 +858,11 @@ export default function App() {
         tasks: tasksDB, staffDB, selectedDate, windowDates, weights: optWeights,
       });
       setTasksDB(improved);
+      const inWin = improved.filter(t => windowDates.includes(t.date));
+      const placed = inWin.filter(t => t.employee !== 'Не назначено').length;
+      if (placed === 0 && inWin.length > 0) {
+        message.warning('Ни одна задача не назначена: ни у кого из сотрудников на смене нет нужных квалификаций. Проверьте квалификации сотрудников (справочники).');
+      }
     } catch (err) {
       message.error('Не удалось запустить оптимизатор: ' + err.message);
     } finally {
