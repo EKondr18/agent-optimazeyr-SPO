@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Typography, Empty, Alert, Segmented, Tag } from 'antd';
 import Plot from 'react-plotly.js';
-import { computeStaffingGaps, resolveStaffingWithCallIns } from '../utils/staffingGap';
+import { computeStaffingGaps } from '../utils/staffingGap';
 import { GRANULARITY_OPTIONS } from '../utils/staffDemand';
 import { qualColor } from '../utils/qualColors';
 import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
@@ -232,22 +232,10 @@ export default function StaffingGapPanel({
     backlogTasks, windowStart, windowDays, granularityMin: granularity,
   }), [backlogTasks, windowStart, windowDays, granularity]);
 
-  // Builds the actual proposal: extend an already-scheduled shift by up to
-  // 2h where possible (cheaper than a fresh call-in), otherwise call in an
-  // off-duty roster employee for a 6h window — re-running the optimizer
-  // after each addition so the whole day/window gets reshuffled, not just
-  // the literal backlog task that triggered the proposal. See
-  // utils/staffingGap.js. A caller that already computed this itself (the
-  // strategic-planning tab, so its headline charts can reuse the same
-  // result instead of resolving twice) passes it in via `resolution` —
-  // this only computes its own when that's absent.
-  const computedResolution = useMemo(() => {
-    if (providedResolution || !targetDate || !staffDB) return null;
-    return resolveStaffingWithCallIns({
-      tasksDB: tasks, staffDB, targetDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver,
-    });
-  }, [providedResolution, tasks, staffDB, targetDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver]);
-  const resolution = providedResolution ?? computedResolution;
+  // The proposal itself (extend a shift / call someone in, re-placing tasks
+  // after each step — see utils/staffingGap.js) is computed off the page's
+  // main thread by the caller and handed in; `null` while it's still running.
+  const resolution = providedResolution;
 
   if (backlogTasks.length === 0) {
     return <Empty description="Бэклог пуст — нехватки персонала нет" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
@@ -301,6 +289,12 @@ export default function StaffingGapPanel({
           </ul>
         </div>
       ))}
+
+      {fullRoster.length > 0 && !resolution && (
+        <Text type="secondary" style={{ display: 'block', marginTop: 16, fontSize: 13 }}>
+          Считаю план вызова на подработку…
+        </Text>
+      )}
 
       {fullRoster.length > 0 && resolution && (
         <div style={{ marginTop: 20 }}>

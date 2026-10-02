@@ -28,6 +28,17 @@ const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 const { Text } = Typography;
 
 const GANTT_WINDOW_DAYS = 3;
+
+// Identity of a rows array, so the worker can tell "same travel network as
+// last time" from "a different file was loaded" by the data itself rather than
+// by its name or size.
+const rowsIds = new WeakMap();
+let rowsIdSeq = 0;
+function rowsId(rows) {
+  if (!rows) return 0;
+  if (!rowsIds.has(rows)) rowsIds.set(rows, ++rowsIdSeq);
+  return rowsIds.get(rows);
+}
 // After a delay, tasks starting within this long of "now" are a stability
 // window — only touched if they're actually broken, never reshuffled just
 // because a fuller re-optimization would prefer someone else. Beyond it,
@@ -214,7 +225,7 @@ function SidebarContent({
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, selectedDate, setSelectedDate,
-  handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities,
+  handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   onClose,
 }) {
@@ -369,6 +380,7 @@ function SidebarContent({
                 type="primary"
                 icon={<ThunderboltOutlined />}
                 block
+                loading={busy}
                 onClick={() => { handleRunOptimizer(); onClose?.(); }}
               >
                 Запустить оптимизатор
@@ -477,6 +489,14 @@ export default function App() {
   // — null means "show the full window" (default); set by either chart's
   // onRelayout so zooming one updates both rulers together.
   const [ganttVisibleRange, setGanttVisibleRange] = useState(null);
+  // Panels whose heavy calculations only matter while they're open — the
+  // call-in/strategic plans re-solve a whole day, so they must not run in the
+  // background on every change to the schedule.
+  const [openPanels, setOpenPanels] = useState(['gantt', 'load']);
+  // A heavy optimizer job is running in the worker.
+  const [busy, setBusy] = useState(false);
+  const workerRef = useRef(null);
+  const jobSeq = useRef(0);
   // How much each aim matters to the optimizer, as a multiplier on the
   // defaults (1 = default, 0 = ignore it). See DEFAULT_WEIGHTS in optimizer.js.
   const [optPriorities, setOptPriorities] = useState({ load: 1, walk: 1, slack: 1, overtime: 1 });
@@ -581,32 +601,50 @@ export default function App() {
   // so its "нужно ещё N чел" interval list still reflects the RAW demand
   // that made a call-in plan necessary in the first place, not the already
   // fixed-up result.
-  const futurePreviewTasks = useMemo(() => {
-    if (!futureDate) return [];
-    return runOptimizer(tasksDB, staffDB, futureDate, distanceResolver, [futureDate]);
-  }, [tasksDB, staffDB, futureDate, distanceResolver]);
+  // The call-in plans re-solve a whole day, so they run in the worker and only
+  // while their panel is open. Each keeps the last finished result; a newer
+  // request supersedes an older one still in flight.
+  const gapOpen = openPanels.includes('staffing-gap');
+  const strategicOpen = openPanels.includes('strategic');
+  const [gapResolution, setGapResolution] = useState(null);
+  const [futureResolution, setFutureResolution] = useState(null);
+  const gapReq = useRef(0);
+  const futureReq = useRef(0);
+
+  useEffect(() => {
+    if (!gapOpen || !selectedDate) return;
+    const req = ++gapReq.current;
+    setGapResolution(null);
+    runJob('gap', { args: {
+      tasksDB, staffDB, targetDate: selectedDate, windowDates, fullRoster, allShiftsByPerson,
+    } }).then(r => { if (req === gapReq.current) setGapResolution(r); })
+      .catch(err => { if (req === gapReq.current) message.error('Не удалось посчитать план вызова: ' + err.message); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gapOpen, tasksDB, staffDB, selectedDate, windowDates, fullRoster, allShiftsByPerson, distanceResolver]);
+
+  useEffect(() => {
+    if (!strategicOpen || !futureDate) return;
+    const req = ++futureReq.current;
+    setFutureResolution(null);
+    runJob('gap', { args: {
+      tasksDB, staffDB, targetDate: futureDate, windowDates: [futureDate], fullRoster, allShiftsByPerson,
+    } }).then(r => { if (req === futureReq.current) setFutureResolution(r); })
+      .catch(err => { if (req === futureReq.current) message.error('Не удалось посчитать стратегический план: ' + err.message); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategicOpen, tasksDB, staffDB, futureDate, fullRoster, allShiftsByPerson, distanceResolver]);
+
+  // Tomorrow as the plain optimizer leaves it (existing shifts only) — what
+  // the gap list measures the need against — and with the call-in plan applied.
   const futureDayTasksRaw = useMemo(
-    () => futurePreviewTasks.filter(t => t.date === futureDate),
-    [futurePreviewTasks, futureDate]
+    () => (futureResolution ? futureResolution.baselineTasks.filter(t => t.date === futureDate) : []),
+    [futureResolution, futureDate]
   );
-  // The same day, but with the call-in/extension plan already applied —
-  // this is what "tomorrow" should actually look like once the plan below
-  // is accepted, so the headline charts show a (near-)fully-staffed day
-  // instead of a raw backlog.
-  const futureResolution = useMemo(() => {
-    if (!futureDate) return null;
-    return resolveStaffingWithCallIns({
-      tasksDB, staffDB, targetDate: futureDate, windowDates: [futureDate],
-      fullRoster, allShiftsByPerson, distanceResolver,
-    });
-  }, [tasksDB, staffDB, futureDate, fullRoster, allShiftsByPerson, distanceResolver]);
   const futureDayTasks = useMemo(
     () => (futureResolution ? futureResolution.tasks.filter(t => t.date === futureDate) : []),
     [futureResolution, futureDate]
   );
   // What's left even after call-ins/extensions — should be empty unless
-  // nobody in the loaded data holds a given qualification at all (see
-  // resolveStaffingWithCallIns).
+  // nobody in the loaded data holds a given qualification at all.
   const futureBacklogTasks = futureResolution?.unresolved ?? [];
 
   function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
@@ -755,13 +793,65 @@ export default function App() {
     setTravelGraphFile(error ? { filename, rows: null, error } : { filename, rows, error: null });
   }
 
-  function handleRunOptimizer() {
-    const built = runOptimizer(tasksDB, staffDB, selectedDate, distanceResolver, windowDates, undefined, { weights: optWeights });
-    // The construction passes commit each task once and never look back —
-    // follow with a local search that goes over the result and keeps
-    // applying relocations/swaps while any of them improves it.
-    const { tasks: improved } = improveAssignment(built, staffDB, selectedDate, distanceResolver, windowDates, { weights: optWeights });
-    setTasksDB(improved);
+  // Runs a heavy optimizer job in the worker and resolves with its result.
+  // Falls back to computing on the page itself where workers aren't available
+  // (it then freezes the UI for the duration, but still works).
+  function runJob(kind, payload) {
+    const resolverRows = distanceResolver
+      ? { locations: locationsFile?.rows || [], travelEdges: travelGraphFile?.rows || [] }
+      : null;
+    const full = { ...payload, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
+    try {
+      if (!workerRef.current) {
+        workerRef.current = new Worker(new URL('./optimizer.worker.js', import.meta.url), { type: 'module' });
+      }
+    } catch {
+      workerRef.current = null;
+    }
+    const w = workerRef.current;
+    if (!w) {
+      if (kind === 'run') {
+        const built = runOptimizer(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, undefined, { weights: payload.weights });
+        return Promise.resolve(improveAssignment(built, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights }).tasks);
+      }
+      return Promise.resolve(applyChanges(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, payload.changes, payload.options));
+    }
+    const id = ++jobSeq.current;
+    return new Promise((resolve, reject) => {
+      const onMessage = e => {
+        if (e.data.id !== id) return;
+        w.removeEventListener('message', onMessage);
+        w.removeEventListener('error', onError);
+        if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.result);
+      };
+      const onError = e => {
+        w.removeEventListener('message', onMessage);
+        w.removeEventListener('error', onError);
+        workerRef.current = null;
+        reject(new Error(e.message || 'worker error'));
+      };
+      w.addEventListener('message', onMessage);
+      w.addEventListener('error', onError);
+      w.postMessage({ id, kind, payload: full });
+    });
+  }
+
+  async function handleRunOptimizer() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // The construction passes commit each task once and never look back —
+      // the job follows them with a local search that goes over the result and
+      // keeps applying relocations/swaps while any of them improves it.
+      const improved = await runJob('run', {
+        tasks: tasksDB, staffDB, selectedDate, windowDates, weights: optWeights,
+      });
+      setTasksDB(improved);
+    } catch (err) {
+      message.error('Не удалось запустить оптимизатор: ' + err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleResetBacklog() {
@@ -774,7 +864,8 @@ export default function App() {
     );
   }
 
-  function handleApplyDelays(delayMap) {
+  async function handleApplyDelays(delayMap) {
+    if (busy) return;
     const updated = tasksDB.map(t => {
       const minutes = delayMap[t.id] ?? 0;
       return {
@@ -807,16 +898,26 @@ export default function App() {
     // stability window is fully re-optimized and the whole pool is searched;
     // inside the window only what's actually broken gets touched.
     const now = new Date(earliest);
-    const { tasks: resolved, repairs } = applyChanges(
-      tasksDB, staffDB, selectedDate, distanceResolver, windowDates, changes,
-      {
-        now,
-        frozenWindowMs: DELAY_FROZEN_WINDOW_MS,
-        stabilityWindowMs: DELAY_STABILITY_WINDOW_MS,
-        farReshuffle: true,
-        weights: optWeights,
-      }
-    );
+    setBusy(true);
+    let outcome;
+    try {
+      outcome = await runJob('changes', {
+        tasks: tasksDB, staffDB, selectedDate, windowDates, changes,
+        options: {
+          now,
+          frozenWindowMs: DELAY_FROZEN_WINDOW_MS,
+          stabilityWindowMs: DELAY_STABILITY_WINDOW_MS,
+          farReshuffle: true,
+          weights: optWeights,
+        },
+      });
+    } catch (err) {
+      message.error('Не удалось применить задержки: ' + err.message);
+      return;
+    } finally {
+      setBusy(false);
+    }
+    const { tasks: resolved, repairs } = outcome;
 
     for (const c of repairs) {
       if (c.backlog) {
@@ -896,7 +997,7 @@ export default function App() {
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, selectedDate, setSelectedDate,
-    handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities,
+    handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   };
 
@@ -1033,9 +1134,10 @@ export default function App() {
           {backlogCount > 0 && <Badge count={backlogCount} style={{ marginLeft: 8 }} />}
         </span>
       ),
-      children: (
+      children: !gapOpen ? null : (
         <StaffingGapPanel
           tasks={tasksDB}
+          resolution={gapResolution}
           staffDB={staffDB}
           targetDate={selectedDate}
           windowDates={windowDates}
@@ -1056,7 +1158,9 @@ export default function App() {
           Стратегическое планирование (сутки {futureDate})
         </span>
       ),
-      children: (
+      children: !strategicOpen ? null : !futureResolution ? (
+        <Text type="secondary">Считаю стратегический план…</Text>
+      ) : (
         <div>
           <Alert
             type="info"
@@ -1247,7 +1351,8 @@ export default function App() {
                 />
                 <Collapse
                   items={collapseItems}
-                  defaultActiveKey={['gantt', 'load']}
+                  activeKey={openPanels}
+                  onChange={keys => setOpenPanels(Array.isArray(keys) ? keys : [keys])}
                   style={{ background: 'transparent' }}
                 />
               </div>

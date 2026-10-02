@@ -124,12 +124,12 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
 // time, either (a) extending an already-scheduled employee's shift to
 // reach a nearby task with their existing (possibly aircraft-type)
 // qualifications, or (b) freshly calling in an off-duty roster employee for
-// a 6h window — and after EACH addition, actually re-running the optimizer
-// for the whole date/window so already-assigned tasks can be reshuffled
-// too. This is why one call-in can sometimes resolve far more than the one
-// task that triggered it: once they're a real resource for that window,
-// the normal optimizer passes pack their whole day, freeing up whoever was
-// covering nearby tasks before.
+// a 6h window — and after EACH addition, placing whatever that makes
+// possible (open tasks go to whoever can take them, by chains of
+// displacements if need be, and the improvement search ripples outward from
+// the employees touched). This is why one call-in can sometimes resolve far
+// more than the one task that triggered it: once they're a real resource
+// for that window, the tasks that were stuck get placed around them.
 //
 // Every gap is tried at increasingly relaxed RELAX_TIERS before being
 // accepted as truly unresolved, so `unresolved` in the result should only
@@ -146,6 +146,7 @@ export function resolveStaffingWithCallIns({
   const workingStaff = (staffDB[targetDate] || []).map(s => ({ ...s }));
   let currentStaffDB = { ...staffDB, [targetDate]: workingStaff };
   let currentTasks = runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
+  const baselineTasks = currentTasks; // the plain run, before any call-in/extension
 
   const usedNames = new Set(workingStaff.map(s => s.name));
   const skipIds = new Set();
@@ -196,21 +197,31 @@ export function resolveStaffingWithCallIns({
       actions.push({ type: 'callin', tier: picked.tier, name: candidate.name, shiftStart, shiftEnd });
     }
 
+    // Place what the addition makes possible without re-solving the whole
+    // window each time (that was a full optimizer run per added person —
+    // tens of seconds on a real day): open tasks go to whoever can take them,
+    // by chains of displacements if need be, and the search ripples outward
+    // only from the employees that touches.
     currentStaffDB = { ...staffDB, [targetDate]: workingStaff };
-    currentTasks = runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
+    // Tasks already known to have nobody at all who could cover them (skipIds)
+    // aren't retried — that's what made every round re-search them in vain.
+    const stillOpen = currentTasks
+      .filter(t => dates.includes(t.date) && t.employee === 'Не назначено' && !skipIds.has(t.id))
+      .map(t => t.id);
+    currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
+      scopeEmployees: [],
+      scopeTaskIds: stillOpen,
+    }).tasks;
   }
 
-  // One improvement pass over the final plan (walking, hand-off margins, still-
-  // open tasks). The people the plan calls in or extends are pinned: their
-  // tasks are the reason they're in the plan, and the pass would otherwise
-  // happily drain them toward idle colleagues. Done once here rather than
-  // inside the loop above, which re-runs the optimizer for every addition.
-  if (actions.length > 0 || currentTasks.some(t => t.employee === 'Не назначено')) {
+  // Tasks set aside as hopeless along the way may have become placeable once
+  // other people were added — one last sweep over everything still open.
+  if (skipIds.size > 0) {
     currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
-      pinnedEmployees: actions.map(a => a.name),
+      scopeEmployees: [],
     }).tasks;
   }
 
   const unresolved = currentTasks.filter(t => dates.includes(t.date) && t.employee === 'Не назначено');
-  return { actions, tasks: currentTasks, unresolved };
+  return { actions, tasks: currentTasks, unresolved, baselineTasks };
 }

@@ -19,9 +19,30 @@ export function hasAllQuals(staffQuals, task) {
 // True when two POS codes are the same physical stand. Prefers the real
 // travel-network resolver (same graph node) when one is loaded; falls back
 // to the plain string heuristic otherwise.
+// The travel network is immutable once built, and the optimizer asks about the
+// same few stand pairs hundreds of thousands of times (every conflict check,
+// every cost), so answers are cached per resolver. Nested maps rather than a
+// concatenated key: no string is built on the hot path.
+const pairCaches = new WeakMap();
+function cachedPair(resolver, kind, a, b) {
+  let c = pairCaches.get(resolver);
+  if (!c) { c = { meters: new Map(), seconds: new Map() }; pairCaches.set(resolver, c); }
+  const m = c[kind];
+  let row = m.get(a);
+  if (!row) { row = new Map(); m.set(a, row); }
+  let v = row.get(b);
+  if (v === undefined) {
+    v = kind === 'meters' ? resolver.metersBetween(a, b) : resolver.secondsBetween(a, b);
+    row.set(b, v);
+  }
+  return v;
+}
+const metersOf = (resolver, a, b) => cachedPair(resolver, 'meters', a, b);
+const secondsOf = (resolver, a, b) => cachedPair(resolver, 'seconds', a, b);
+
 function samePosition(pos1, pos2, resolver) {
   if (resolver) {
-    const m = resolver.metersBetween(pos1, pos2);
+    const m = metersOf(resolver, pos1, pos2);
     if (m != null) return m === 0;
   }
   return getPosDistance(pos1, pos2) === 0;
@@ -48,7 +69,7 @@ function hasInsufficientGap(a, b, resolver) {
   const exitPos = earlier.exitPos ?? earlier.pos;
   const entryPos = later.entryPos ?? later.pos;
 
-  const neededSeconds = resolver ? resolver.secondsBetween(exitPos, entryPos) : null;
+  const neededSeconds = resolver ? secondsOf(resolver, exitPos, entryPos) : null;
   if (neededSeconds != null) {
     return gapMs < neededSeconds * 1000;
   }
@@ -109,7 +130,7 @@ function getNextTaskEntryPos(empTasks, afterTime) {
 }
 
 function posDist(posA, posB, resolver) {
-  const meters = resolver ? resolver.metersBetween(posA, posB) : null;
+  const meters = resolver ? metersOf(resolver, posA, posB) : null;
   return meters != null ? meters : getPosDistance(posA, posB);
 }
 
@@ -373,7 +394,7 @@ export function resolveWeights(weights) {
 // How long the walk between two points takes, on the same basis
 // hasInsufficientGap uses (real network when loaded, else the heuristic).
 function transitMs(exitPos, entryPos, resolver) {
-  const seconds = resolver ? resolver.secondsBetween(exitPos, entryPos) : null;
+  const seconds = resolver ? secondsOf(resolver, exitPos, entryPos) : null;
   if (seconds != null) return seconds * 1000;
   return getPosDistance(exitPos, entryPos) >= MIN_TRANSITION_POS_DIST ? MIN_TRANSITION_MS : 0;
 }
@@ -411,6 +432,46 @@ function routeStats(shifts, sorted, resolver) {
   return { walk, slackShort, overtime };
 }
 
+// Same answer as hasConflict, but for a list ordered by start: only tasks
+// whose start can possibly matter are looked at (a binary search to the first
+// one, then until their start is past the task's end plus the longest walk
+// any hand-off can need). `bounds` = { before, after } in ms, computed once
+// per run from the longest task and the longest walk between any two stands
+// in play, so nothing that could conflict is ever skipped.
+function conflictsSorted(sorted, task, resolver, bounds) {
+  let lo = 0, hi = sorted.length;
+  const from = task.start.getTime() - bounds.before;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid].start.getTime() <= from) lo = mid + 1; else hi = mid;
+  }
+  const limit = task.end.getTime() + bounds.after;
+  for (let i = lo; i < sorted.length; i++) {
+    const x = sorted[i];
+    if (x.start.getTime() >= limit) break;
+    if (conflictsWith(x, task, resolver)) return true;
+  }
+  return false;
+}
+
+function conflictBounds(tasks, resolver) {
+  let maxDur = 0;
+  const exits = new Set(), entries = new Set();
+  for (const t of tasks) {
+    maxDur = Math.max(maxDur, t.end - t.start);
+    exits.add(t.exitPos ?? t.pos);
+    entries.add(t.entryPos ?? t.pos);
+  }
+  let need = MIN_TRANSITION_MS;
+  if (resolver) {
+    for (const e of exits) for (const n of entries) {
+      const sec = secondsOf(resolver, e, n);
+      if (sec != null && sec * 1000 > need) need = sec * 1000;
+    }
+  }
+  return { before: maxDur + need, after: need };
+}
+
 // A copy of `list` (ordered by start) with `task` added in its place.
 function insertSorted(list, task) {
   let i = list.length;
@@ -421,6 +482,29 @@ function insertSorted(list, task) {
 function employeeCost(W, shifts, sortedTasks, resolver) {
   const r = routeStats(shifts, sortedTasks, resolver);
   return W.load * sortedTasks.length ** 2 + W.walk * r.walk + W.slack * r.slackShort + W.overtime * r.overtime;
+}
+
+// The weighted cost of a whole assignment (what the improvement search drives
+// down): sum over employees of load² · load weight + walking + hand-off margin
+// + overtime. Exposed so callers and tests can compare two assignments.
+export function assignmentCost(tasks, staffDB, selectedDate, resolver, windowDates, weights) {
+  const W = resolveWeights(weights);
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const shifts = new Map();
+  for (const s of mergeStaffWindow(staffDB, dates)) {
+    if (!shifts.has(s.name)) shifts.set(s.name, []);
+    shifts.get(s.name).push(s);
+  }
+  const by = {};
+  for (const t of tasks) {
+    if (dates.includes(t.date) && t.employee !== 'Не назначено') (by[t.employee] ??= []).push(t);
+  }
+  let total = 0;
+  for (const [name, list] of Object.entries(by)) {
+    list.sort((a, b) => a.start - b.start);
+    total += employeeCost(W, shifts.get(name), list, resolver);
+  }
+  return total;
 }
 
 // Improvement pass, run AFTER the constructive passes have produced a valid
@@ -470,9 +554,11 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     shiftsByName.get(s.name).push(s);
   }
   const indexById = new Map(result.map((t, i) => [t.id, i]));
+  const bounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
 
   let byEmp = {};
-  const costCache = new Map();
+  let epoch = 0;
+  const overCache = new Map();
   const gainCache = new Map();
   const rebuildByEmp = () => {
     byEmp = {};
@@ -484,8 +570,9 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       }
     }
     for (const list of Object.values(byEmp)) list.sort((a, b) => a.start - b.start);
-    costCache.clear();
     gainCache.clear();
+    overCache.clear();
+    epoch++;
   };
   rebuildByEmp();
 
@@ -500,28 +587,132 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
   // Qualification + shift-bounds half of "does this task fit this employee" —
   // independent of what else they have, so memoized; the cheap test that
   // rules most (task, employee) pairs out before any cost is computed.
-  const staticMemo = new Map();
-  const staticFits = (name, task) => {
-    const key = name + '\u0000' + task.id;
-    let ok = staticMemo.get(key);
-    if (ok === undefined) {
-      const shifts = shiftsByName.get(name);
-      ok = !!shifts && shifts.some(s =>
-        hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.end <= s.shiftEnd
-      );
-      staticMemo.set(key, ok);
+  // Who can take a task at all is computed once per task, as a list (to
+  // iterate only real candidates) and a set (to test membership).
+  const eligibleMemo = new Map();
+  const eligibleOf = task => {
+    let e = eligibleMemo.get(task.id);
+    if (!e) {
+      const names = [];
+      for (const [name, shifts] of shiftsByName) {
+        if (shifts.some(s => hasAllQuals(s.quals, task) && s.shiftStart <= task.start && task.end <= s.shiftEnd)) names.push(name);
+      }
+      e = { names, set: new Set(names) };
+      eligibleMemo.set(task.id, e);
     }
-    return ok;
+    return e;
   };
+  const staticFits = (name, task) => eligibleOf(task).set.has(name);
   // `empTasks` = what the employee would already have, WITHOUT this task.
   const fits = (name, task, empTasks) =>
-    staticFits(name, task) && !hasConflict(empTasks, task, resolver);
-  const costOf = (name, empTasks) => employeeCost(W, shiftsByName.get(name), empTasks, resolver);
-  const curCost = name => {
-    if (!costCache.has(name)) costCache.set(name, costOf(name, byEmp[name] || []));
-    return costCache.get(name);
+    staticFits(name, task) && !conflictsSorted(empTasks, task, resolver, bounds);
+  // Incremental cost: adding or removing one task only changes the hand-offs
+  // next to it (and the overtime figure), so its effect is computed from the
+  // two neighbours instead of re-walking the whole day. These agree exactly
+  // with employeeCost minus the load term (the tests check the search never
+  // raises assignmentCost, and a scratch check confirmed move-by-move equality).
+  const baseOf = name => shiftsByName.get(name)?.[0]?.basePos ?? null;
+  const linkCost = (name, prev, next) => {
+    if (!next) return 0;
+    const entry = next.entryPos ?? next.pos;
+    if (!prev) {
+      const base = baseOf(name);
+      return base ? W.walk * posDist(base, entry, resolver) : 0;
+    }
+    if (next.start < prev.end) return 0;
+    const exit = prev.exitPos ?? prev.pos;
+    const spare = (next.start - prev.end) - transitMs(exit, entry, resolver);
+    return W.walk * posDist(exit, entry, resolver) + W.slack * Math.max(0, TARGET_SLACK_MS - spare) / 60000;
   };
-  const invalidate = name => { costCache.delete(name); gainCache.delete(name); };
+  // Shift bounds as plain numbers, once.
+  const shiftMs = new Map();
+  for (const [name, shifts] of shiftsByName) {
+    shiftMs.set(name, shifts.map(sh => ({ s: sh.shiftStart.getTime(), e: sh.shiftEnd.getTime() })));
+  }
+  // Minutes worked past the end of the shift(s) the list's tasks start in —
+  // the same figure routeStats gives — optionally with `add` included or the
+  // task `skipId` left out.
+  const overtimeOf = (name, list, add, skipId) => {
+    let total = 0;
+    for (const { s: shS, e: shE } of shiftMs.get(name) || []) {
+      let maxEnd = -Infinity;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        if (skipId !== undefined && t.id === skipId) continue;
+        const ts = t.start.getTime();
+        if (ts >= shS && ts <= shE) {
+          const te = t.end.getTime();
+          if (te > maxEnd) maxEnd = te;
+        }
+      }
+      if (add) {
+        const ts = add.start.getTime();
+        if (ts >= shS && ts <= shE) {
+          const te = add.end.getTime();
+          if (te > maxEnd) maxEnd = te;
+        }
+      }
+      if (maxEnd > shE) total += (maxEnd - shE) / 60000;
+    }
+    return W.overtime * total;
+  };
+  const overCurrent = name => {
+    let v = overCache.get(name);
+    if (v === undefined) { v = overtimeOf(name, byEmp[name] || []); overCache.set(name, v); }
+    return v;
+  };
+  const insertIndex = (list, task) => {
+    // first position whose start is later than the task's (inserts after equals)
+    let lo = 0, hi = list.length;
+    const ts = task.start.getTime();
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid].start.getTime() <= ts) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  };
+  // Hand-off part of the change if `task` were added to / taken off a list
+  // (the neighbours' links only); overtime is handled separately because it
+  // depends on the whole list.
+  const linkInsert = (name, list, task) => {
+    const i = insertIndex(list, task);
+    const prev = list[i - 1] ?? null, next = list[i] ?? null;
+    return linkCost(name, prev, task) + linkCost(name, task, next) - linkCost(name, prev, next);
+  };
+  const linkRemove = (name, list, task) => {
+    const i = list.findIndex(t => t.id === task.id);
+    const prev = list[i - 1] ?? null, next = list[i + 1] ?? null;
+    return linkCost(name, prev, next) - linkCost(name, prev, task) - linkCost(name, task, next);
+  };
+  // Change in (walk + slack + overtime) cost if `task` were added to the list.
+  const insertParts = (name, list, task) =>
+    linkInsert(name, list, task) + overtimeOf(name, list, task) - overCurrent(name);
+  // Change in the same if `task` were taken off the list.
+  const removeParts = (name, list, task) =>
+    linkRemove(name, list, task) + overtimeOf(name, list, null, task.id) - overCurrent(name);
+  // Every employee's list carries a version that changes whenever it does, and
+  // each task remembers the versions it was last fully evaluated against — so
+  // a later round only re-examines (task, employee) pairs where something has
+  // actually changed since, instead of the whole cross product again.
+  const version = new Map();
+  const invalidate = name => {
+    gainCache.delete(name); overCache.delete(name);
+    version.set(name, (version.get(name) ?? 0) + 1);
+  };
+  const seenByTask = new Map();
+  const unchangedSince = (task, A, B) => {
+    const seen = seenByTask.get(task.id);
+    return !!seen && seen.epoch === epoch && seen.A === (version.get(A) ?? 0) &&
+      seen.B.get(B) === (version.get(B) ?? 0);
+  };
+  const markEvaluated = (task, A, B) => {
+    let seen = seenByTask.get(task.id);
+    if (!seen || seen.epoch !== epoch || seen.A !== (version.get(A) ?? 0)) {
+      seen = { epoch, A: version.get(A) ?? 0, B: new Map() };
+      seenByTask.set(task.id, seen);
+    }
+    seen.B.set(B, version.get(B) ?? 0);
+  };
   // How much the employee's walking/slack/overtime cost would drop if this one
   // task were taken off them (the load term is handled separately). Used only
   // to rule out hopeless candidates: inserting a task anywhere never costs
@@ -532,9 +723,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     if (!m) { m = new Map(); gainCache.set(name, m); }
     let g = m.get(task.id);
     if (g === undefined) {
-      const list = byEmp[name];
-      const rest = list.filter(t => t.id !== task.id);
-      g = (costOf(name, list) - W.load * list.length ** 2) - (costOf(name, rest) - W.load * rest.length ** 2);
+      g = -removeParts(name, byEmp[name], task);
       m.set(task.id, g);
     }
     return g;
@@ -560,7 +749,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       for (const name of shiftsByName.keys()) {
         const emp = byEmp[name];
         if (!fits(name, task, emp)) continue;
-        const delta = costOf(name, insertSorted(emp, task)) - curCost(name);
+        const delta = W.load * (2 * emp.length + 1) + insertParts(name, emp, task);
         if (!best || delta < best.delta) best = { name, delta };
       }
       if (best) {
@@ -616,34 +805,47 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
           const A = task.employee;
           const aTasks = byEmp[A];
           const aRest = aTasks.filter(t => t.id !== task.id);
-          const costA = curCost(A);
-          const costARest = costOf(A, aRest);
           const gainA = walkGain(A, task);
 
           let best = null;
 
-          // Relocate `task` to another employee.
-          for (const B of shiftsByName.keys()) {
-            if (B === A) continue;
+          // Only employees who could take this task at all are looked at, and
+          // of those only the ones whose list (or A's) changed since this task
+          // was last checked against them with nothing found.
+          for (const B of eligibleOf(task).names) {
+            if (B === A || !byEmp[B]) continue;
+            if (prune && unchangedSince(task, A, B)) continue;
             const bTasks = byEmp[B];
-            // Lower bound on the delta: B's extra load cost minus what A saves.
-            if (prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) >= -EPS) continue;
-            if (!fits(B, task, bTasks)) continue;
-            const delta = costARest + costOf(B, insertSorted(bTasks, task)) - costA - curCost(B);
-            if (delta < -EPS && (!best || delta < best.delta)) best = { kind: 'relocate', B, delta };
-          }
+            let foundHere = false;
 
-          // Swap `task` with a movable task of another employee.
-          for (const other of result) {
-            if (other.employee === A || !isMovable(other) || !byEmp[other.employee]) continue;
-            const B = other.employee;
-            if (prune && gainA + walkGain(B, other) <= EPS) continue;
-            if (!staticFits(B, task) || !staticFits(A, other)) continue;
-            const bTasks = byEmp[B];
-            const bRest = bTasks.filter(t => t.id !== other.id);
-            if (hasConflict(bRest, task, resolver) || hasConflict(aRest, other, resolver)) continue;
-            const delta = costOf(A, insertSorted(aRest, other)) + costOf(B, insertSorted(bRest, task)) - costA - curCost(B);
-            if (delta < -EPS && (!best || delta < best.delta)) best = { kind: 'swap', B, other, delta };
+            // Relocate `task` to B. Lower bound on the delta: B's extra load
+            // cost minus what A saves.
+            if (!(prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) >= -EPS) &&
+                !conflictsSorted(bTasks, task, resolver, bounds)) {
+              const delta = W.load * (2 * (bTasks.length - aTasks.length) + 2) - gainA + insertParts(B, bTasks, task);
+              if (delta < -EPS) {
+                foundHere = true;
+                if (!best || delta < best.delta) best = { kind: 'relocate', B, delta };
+              }
+            }
+
+            // Swap `task` with a movable task of B's.
+            for (const other of bTasks) {
+              if (!isMovable(other)) continue;
+              if (prune && gainA + walkGain(B, other) <= EPS) continue;
+              if (!staticFits(A, other)) continue;
+              const bRest = bTasks.filter(t => t.id !== other.id);
+              if (conflictsSorted(bRest, task, resolver, bounds) || conflictsSorted(aRest, other, resolver, bounds)) continue;
+              const delta =
+                linkRemove(A, aTasks, task) + linkInsert(A, aRest, other) + overtimeOf(A, aRest, other) - overCurrent(A) +
+                linkRemove(B, bTasks, other) + linkInsert(B, bRest, task) + overtimeOf(B, bRest, task) - overCurrent(B);
+              if (delta < -EPS) {
+                foundHere = true;
+                if (!best || delta < best.delta) best = { kind: 'swap', B, other, delta };
+              }
+            }
+
+            if (prune && !foundHere) markEvaluated(task, A, B);
           }
 
           if (!best) continue;
@@ -667,7 +869,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
         }
       }
     }
-    if (!progress && prune) { prune = false; progress = true; }
+    if (!progress && prune) { prune = false; seenByTask.clear(); progress = true; }
   }
 
   return { tasks: result, moves, touched: touchedList() };
@@ -692,37 +894,90 @@ function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
     if (hasConflict(emp, task, resolver)) return null;
     return W.load * (2 * emp.length + 1) + W.walk * scoreEmployee(s, assignedTasks, task, resolver).dist;
   };
+  const summarize = costs => {
+    let c1 = null, i1 = -1, c2 = null, i2 = -1;
+    for (let i = 0; i < costs.length; i++) {
+      const c = costs[i];
+      if (c === null) continue;
+      if (c1 === null || c < c1) { c2 = c1; i2 = i1; c1 = c; i1 = i; }
+      else if (c2 === null || c < c2) { c2 = c; i2 = i; }
+    }
+    return { c1, i1, c2, i2 };
+  };
 
-  const table = new Map(toAssign.map(t => [t.id, staff.map(s => costFor(t, s))]));
+  const bounds = conflictBounds(result, resolver);
+  const colsByName = new Map();
+  staff.forEach((s, i) => {
+    if (!colsByName.has(s.name)) colsByName.set(s.name, []);
+    colsByName.get(s.name).push(i);
+  });
+  const table = new Map();
+  const best = new Map();
+  for (const t of toAssign) {
+    const costs = staff.map(s => costFor(t, s));
+    table.set(t.id, costs);
+    best.set(t.id, summarize(costs));
+  }
   const remaining = new Map(toAssign.map(t => [t.id, t]));
   const backlog = [];
 
   while (remaining.size > 0) {
     let pick = null;
     for (const [id, task] of remaining) {
-      let c1 = null, c2 = null, i1 = -1;
-      const costs = table.get(id);
-      for (let i = 0; i < costs.length; i++) {
-        const c = costs[i];
-        if (c === null) continue;
-        if (c1 === null || c < c1) { c2 = c1; c1 = c; i1 = i; }
-        else if (c2 === null || c < c2) c2 = c;
-      }
-      if (c1 === null) { backlog.push(task); remaining.delete(id); continue; }
-      const regret = c2 === null ? Infinity : c2 - c1;
-      if (!pick || regret > pick.regret || (regret === pick.regret && c1 < pick.c1)) {
-        pick = { task, i1, regret, c1 };
+      const b = best.get(id);
+      if (b.c1 === null) { backlog.push(task); remaining.delete(id); continue; }
+      const regret = b.c2 === null ? Infinity : b.c2 - b.c1;
+      if (!pick || regret > pick.regret || (regret === pick.regret && b.c1 < pick.c1)) {
+        pick = { task, i1: b.i1, regret, c1: b.c1 };
       }
     }
     if (!pick) break;
 
+    // The table is kept up to date cheaply (see below), so before committing
+    // the pick is re-checked against what the employee has now — a stale
+    // entry must never turn into a double-booking.
     const chosen = staff[pick.i1];
+    if (costFor(pick.task, chosen) === null) {
+      const costs = table.get(pick.task.id);
+      costs[pick.i1] = null;
+      best.set(pick.task.id, summarize(costs));
+      continue;
+    }
     commit(result, assignedTasks, pick.task.id, chosen.name);
     remaining.delete(pick.task.id);
-    // Only the employee who just received a task changed — re-cost that column.
+
+    // Only the employee who just received a task changed. Tasks it can affect
+    // (a possible conflict, or a new neighbour) are re-costed in full; for the
+    // rest the only effect is one more task on that employee, a flat load
+    // increase. Rankings are re-derived only where that column mattered.
+    const cols = colsByName.get(chosen.name);
+    const P = pick.task;
+    const ps = P.start.getTime(), pe = P.end.getTime();
+    const lo = ps - bounds.before, hi = pe + bounds.after;
+    // A task's insertion cost also depends on who its neighbours would be: the
+    // new task changes that only for tasks that now sit right after it (before
+    // the next task ends) or right before it (after the previous one starts).
+    let hiLast = Infinity, loNext = -Infinity;
+    for (const t of assignedTasks[chosen.name]) {
+      if (t.id === P.id) continue;
+      const te = t.end.getTime(), ts = t.start.getTime();
+      if (te > pe && te < hiLast) hiLast = te;
+      if (ts < ps && ts > loNext) loNext = ts;
+    }
     for (const [id, task] of remaining) {
       const costs = table.get(id);
-      staff.forEach((s, i) => { if (s.name === chosen.name) costs[i] = costFor(task, s); });
+      const b = best.get(id);
+      const tS = task.start.getTime(), tE = task.end.getTime();
+      const near = (tS < hi && tE > lo) || (tS >= pe && tS < hiLast) || (tE <= ps && tE > loNext);
+      let touched = false;
+      for (const col of cols) {
+        if (costs[col] === null) continue;
+        costs[col] = near ? costFor(task, staff[col]) : costs[col] + 2 * W.load;
+        if (costs[col] === null || b.i1 === col || b.i2 === col || (near && costs[col] < (b.c2 ?? Infinity))) {
+          touched = true;
+        }
+      }
+      if (touched) best.set(id, summarize(costs));
     }
   }
   return backlog;
