@@ -22,7 +22,11 @@ const WALK_EPS_MS = 1;
 //   maxOvertimeMin    — how far past shift end a task that STARTS within the
 //                       shift may run. The only overtime the optimizer ever
 //                       creates; anything longer stays open for a dispatcher.
-export const DEFAULT_POLICY = { sameFlightOverlap: false, maxOvertimeMin: 60 };
+//   waivedQuals       — qualifications a task may be assigned without (for
+//                       types nobody on the roster holds yet, by an explicit
+//                       decision); every such assignment is counted and shown.
+//                       Empty by default: every requirement is hard.
+export const DEFAULT_POLICY = { sameFlightOverlap: false, maxOvertimeMin: 60, waivedQuals: [] };
 let POLICY = { ...DEFAULT_POLICY };
 export function setPolicy(policy) {
   POLICY = { ...DEFAULT_POLICY, ...(policy || {}) };
@@ -49,7 +53,21 @@ export function requiredQuals(task) {
 // than one required qualification (e.g. aircraft type + SV), and all of them
 // must be present in the employee/shift's quals.
 export function hasAllQuals(staffQuals, task) {
-  return requiredQuals(task).every(q => staffQuals.includes(q));
+  const waived = POLICY.waivedQuals;
+  return requiredQuals(task).every(q => staffQuals.includes(q) || (waived.length > 0 && waived.includes(q)));
+}
+
+// Assigned tasks whose employee lacks a qualification that was waived for
+// them by policy — what the dispatcher must know was assigned that way.
+export function waivedAssignments(tasks, staffDB, dates) {
+  if (POLICY.waivedQuals.length === 0) return [];
+  const qualsByName = new Map();
+  for (const d of dates) for (const s of staffDB[d] || []) {
+    if (!qualsByName.has(s.name)) qualsByName.set(s.name, new Set());
+    for (const q of s.quals) qualsByName.get(s.name).add(q);
+  }
+  return tasks.filter(t => dates.includes(t.date) && t.employee !== 'Не назначено' &&
+    requiredQuals(t).some(q => POLICY.waivedQuals.includes(q) && !qualsByName.get(t.employee)?.has(q)));
 }
 
 // True when two POS codes are the same physical stand. Prefers the real
@@ -2072,6 +2090,7 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
       improveTermination: improved.terminationReason,
       lns: { iterations: lns.iterations, accepted: lns.accepted, terminationReason: lns.terminationReason },
       reopenedByCheck: certified.reopened.length,
+      waived: waivedAssignments(certified.tasks, staffDB, [selectedDate]).length,
       violations: certified.remaining,
       lowerBound: bound,
       cost: assignmentCost(certified.tasks, staffDB, selectedDate, resolver, dates, weights),

@@ -152,6 +152,12 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
   const offer = o => { if (!best || o.price < best.price) best = o; };
   for (const s of workingStaff) {
     if (!hasAllQuals(s.quals, target)) continue;
+    // Their other shifts as planned plus anything this plan already gave
+    // them (a call-in, another extended shift) — an extension clears all.
+    const others = new Map([[s.name, [
+      ...(allShiftsByPerson?.get(s.name) || []),
+      ...workingStaff.filter(w => w.name === s.name && w !== s),
+    ]]]);
     // Measured against the shift as originally planned, so repeated
     // extensions of one person never add up past the cap.
     const baseStart = s.originalStart ?? s.shiftStart, baseEnd = s.originalEnd ?? s.shiftEnd;
@@ -161,7 +167,7 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
       // also a task that starts inside the shift and runs past its end —
       // exactly what straddles a shift change
       if (target.end > s.shiftEnd && target.start >= s.shiftStart && earlier + (target.end - baseEnd) <= extendMs &&
-          extensionClear(s, s.shiftStart, target.end, allShiftsByPerson, bufferMs)) {
+          extensionClear(s, s.shiftStart, target.end, others, bufferMs)) {
         offer({ type: 'extend', tier, staff: s, direction: 'end', newBound: target.end,
           price: (target.end - s.shiftEnd) / H + TIER_PRICE_H[tier] });
         break;
@@ -172,7 +178,7 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
     const newStart = new Date(Math.floor(target.start.getTime() - walkMs(s)));
     for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
       if (newStart < s.shiftStart && target.end <= s.shiftEnd && (baseStart - newStart) + later <= extendMs &&
-          extensionClear(s, newStart, s.shiftEnd, allShiftsByPerson, bufferMs)) {
+          extensionClear(s, newStart, s.shiftEnd, others, bufferMs)) {
         offer({ type: 'extend', tier, staff: s, direction: 'start', newBound: newStart,
           price: (s.shiftStart - newStart) / H + TIER_PRICE_H[tier] });
         break;
@@ -181,8 +187,16 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
   }
   for (const p of fullRoster) {
     if (usedNames.has(p.name) || !hasAllQuals(p.quals, target)) continue;
+    // Someone with a shift earlier or later that day can still be called in
+    // for another stretch — whether that leaves enough rest is exactly what
+    // the tiers' rest rule checks, against their shifts as planned AND as
+    // already extended in this plan.
+    const theirs = [
+      ...(allShiftsByPerson?.get(p.name) || []),
+      ...workingStaff.filter(w => w.name === p.name),
+    ];
     for (const { tier, bufferMs } of RELAX_TIERS) {
-      const window = callInWindow(p, target, allShiftsByPerson, bufferMs);
+      const window = callInWindow(p, target, new Map([[p.name, theirs]]), bufferMs);
       if (window) {
         offer({ type: 'callin', tier, candidate: p, window,
           price: MIN_CALLIN_MS / H + CALLOUT_PRICE_H + TIER_PRICE_H[tier] });
@@ -221,9 +235,11 @@ export function resolveStaffingWithCallIns({
   let currentTasks = runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
   const baselineTasks = currentTasks; // the plain run, before any call-in/extension
 
-  const usedNames = new Set(workingStaff.map(s => s.name));
+  // People already called in by this plan (each at most once).
+  const usedNames = new Set();
   const skipIds = new Set();
   const actions = [];
+  const actionOf = new Map(); // working shift object -> its action
 
   for (let iter = 0; iter < MAX_ITERATIONS && actions.length < MAX_ACTIONS; iter++) {
     const backlog = currentTasks
@@ -244,23 +260,24 @@ export function resolveStaffingWithCallIns({
       else s.shiftStart = new Date(Math.min(s.shiftStart.getTime(), picked.newBound.getTime()));
 
       // A later, further-out task can trigger a second extension of the
-      // SAME person — either someone already extended once before, or
-      // someone freshly called in earlier whose engagement window now
-      // needs to stretch too. Either way, widen that one existing action
-      // instead of adding a duplicate row for the same name: the UI keys
-      // rows by name, and two rows sharing a name would misalign the
-      // label column against the chart for everyone after them.
-      const existing = actions.find(a => a.name === s.name);
+      // SAME shift — one already extended, or a call-in whose window now
+      // needs to stretch. Either way, widen that shift's one existing action.
+      // Matched by the shift itself, not the name: one person can have both
+      // their own shift extended and a separate call-in, and merging those by
+      // name once glued two different shifts into one impossible row.
+      const existing = actionOf.get(s);
       if (existing) {
         existing.shiftStart = s.shiftStart;
         existing.shiftEnd = s.shiftEnd;
         if (TIER_ORDER.indexOf(picked.tier) > TIER_ORDER.indexOf(existing.tier)) existing.tier = picked.tier;
       } else {
-        actions.push({
+        const action = {
           type: 'extend', tier: picked.tier, name: s.name,
           originalStart: preStart, originalEnd: preEnd,
           shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
-        });
+        };
+        actions.push(action);
+        actionOf.set(s, action);
       }
     } else {
       const { candidate, window } = picked;
@@ -268,7 +285,9 @@ export function resolveStaffingWithCallIns({
       const newStaff = { name: candidate.name, quals: candidate.quals, shiftStart, shiftEnd, basePos: null };
       workingStaff.push(newStaff);
       usedNames.add(candidate.name);
-      actions.push({ type: 'callin', tier: picked.tier, name: candidate.name, shiftStart, shiftEnd });
+      const action = { type: 'callin', tier: picked.tier, name: candidate.name, shiftStart, shiftEnd };
+      actions.push(action);
+      actionOf.set(newStaff, action);
     }
 
     // Place what the addition makes possible without re-solving the whole
@@ -310,7 +329,20 @@ export function resolveStaffingWithCallIns({
   const bound = unassignedLowerBound(dayTasks.filter(qualifiedSomewhere), staffDB, targetDate, [targetDate], { keepUncovered: true });
   const minExtra = (bound.bottlenecks || []).map(b => ({ at: b.at, people: b.deficit, active: b.active }));
   const noEligible = dayTasks.filter(t => !qualifiedSomewhere(t)).length;
-  return { actions, tasks: currentTasks, unresolved, baselineTasks, minExtra, noEligible };
+  // Why each task is still open, so nothing is left unexplained:
+  //   NO_QUAL     nobody on shift or in the roster holds what it needs
+  //   TOO_LONG    longer than any shift plus the legal 4 h — a data error
+  //               or work that has to be split between people
+  //   NO_CAPACITY qualified people exist, but every one of them is busy then
+  //               or can't take it within the rest and extension rules
+  const longestShift = Math.max(0, ...(staffDB[targetDate] || []).map(s => s.shiftEnd - s.shiftStart));
+  const reasonOf = t => {
+    if (!qualifiedSomewhere(t)) return 'NO_QUAL';
+    if (t.end - t.start > Math.max(longestShift, CALLIN_WINDOW_MS) + LEGAL_MAX_EXTENSION_MS) return 'TOO_LONG';
+    return 'NO_CAPACITY';
+  };
+  const unresolvedReasons = Object.fromEntries(unresolved.map(t => [t.id, reasonOf(t)]));
+  return { actions, tasks: currentTasks, unresolved, unresolvedReasons, baselineTasks, minExtra, noEligible };
 }
 
 // Shrinks every proposal to what it is actually used for once the plan is

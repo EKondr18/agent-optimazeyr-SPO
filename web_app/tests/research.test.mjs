@@ -277,3 +277,31 @@ test('call-in plan: an earlier start of a day shift beats calling someone in, an
   assert.equal(c.actions[0].type, 'callin');
   assert.equal(c.actions[0].shiftEnd - c.actions[0].shiftStart, 4 * 3600000);
 });
+
+test('call-in plan: one person can get an extension and a separate call-in, kept apart', () => {
+  const p = { name: 'P', quals: ['Q1'], shiftStart: D(6), shiftEnd: D(14), basePos: null };
+  const r = resolveStaffingWithCallIns({
+    tasksDB: [mk('late', 14, 0, 14, 45, 'Q1'), mk('night', 23, 0, 23, 30, 'Q1')],
+    staffDB: db(p), targetDate: DATE, windowDates: WIN,
+    fullRoster: [{ name: 'P', quals: ['Q1'] }],
+    allShiftsByPerson: new Map([['P', [{ shiftStart: D(6), shiftEnd: D(14) }]]]), distanceResolver: null,
+  });
+  assert.equal(r.unresolved.length, 0);
+  const ext = r.actions.find(a => a.type === 'extend'), call = r.actions.find(a => a.type === 'callin');
+  assert.ok(ext && call, JSON.stringify(r.actions));
+  assert.equal(ext.shiftEnd.getTime(), D(14, 45).getTime());
+  assert.ok(call.shiftStart >= D(23) && call.shiftStart > ext.shiftEnd);
+  const applied = db({ ...p, shiftEnd: ext.shiftEnd }, { name: 'P', quals: ['Q1'], shiftStart: call.shiftStart, shiftEnd: call.shiftEnd, basePos: null });
+  assert.deepEqual(validatePlan(r.tasks, applied, DATE, null, WIN), []);
+});
+
+test('waived qualification: assignable only when the policy says so, and counted', async () => {
+  const { waivedAssignments } = await import('../src/optimizer.js');
+  const staff = db(person('S1', ['Q1']));
+  const tasks = [mk('rare', 9, 0, 9, 30, 'Q_RARE')];
+  assert.equal(open(fullRun(tasks, staff)), 1);
+  setPolicy({ waivedQuals: ['Q_RARE'] });
+  const out = fullRun(tasks, staff);
+  assert.equal(open(out), 0);
+  assert.equal(waivedAssignments(out, staff, WIN).length, 1);
+});

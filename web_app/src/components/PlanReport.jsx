@@ -113,6 +113,7 @@ function StatsBody({ s }) {
               )} />
             </>}
         {s.reopenedByCheck > 0 && <Text type="secondary"> (снято при проверке: {s.reopenedByCheck})</Text>}
+        {s.waived > 0 && <Tag color="orange" style={{ marginLeft: 6 }}>{s.waived} назначено без допуска (по правилу)</Tag>}
       </div>
       <Text type="secondary" style={{ fontSize: 12 }}>
         Время: сборка {sec(s.ms.build)}{s.construction ? ` (${s.construction === 'bestfit' ? 'плотная упаковка' : 'regret'})` : ''}, улучшение {sec(s.ms.improve)}
