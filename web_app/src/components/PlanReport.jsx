@@ -90,9 +90,12 @@ function StatsBody({ s }) {
           <Text strong>Нижняя граница за день:</Text> при любом распределении останется не меньше <b>{lb.bound}</b>{' '}
           {lb.noEligible > 0 && <>({lb.noEligible} — задачи, которые некому выполнить вообще: нет смены с нужным допуском) </>}
           — значит, улучшить можно не больше чем на <b>{reachable}</b>.
-          {lb.peak && (
+          {lb.bottlenecks?.length > 0 && (
             <div style={{ marginTop: 2 }}>
-              Самый узкий момент: <b>{fmtDT(lb.peak.at)}</b> — одновременно {lb.peak.active} задач, подходящих людей хватает на {lb.peak.coverable}.
+              Где людей не хватает в принципе:{' '}
+              <List items={lb.bottlenecks} limit={6} render={m => (
+                <span key={String(m.at)}><b>{fmtDT(m.at)}</b> — {m.active} задач одновременно, людей хватает на {m.coverable}</span>
+              )} />
             </div>
           )}
         </div>
@@ -112,7 +115,7 @@ function StatsBody({ s }) {
         {s.reopenedByCheck > 0 && <Text type="secondary"> (снято при проверке: {s.reopenedByCheck})</Text>}
       </div>
       <Text type="secondary" style={{ fontSize: 12 }}>
-        Время: сборка {sec(s.ms.build)}, улучшение {sec(s.ms.improve)}
+        Время: сборка {sec(s.ms.build)}{s.construction ? ` (${s.construction === 'bestfit' ? 'плотная упаковка' : 'regret'})` : ''}, улучшение {sec(s.ms.improve)}
         {s.improveTermination === 'deadline' ? ' (остановлено по времени)' : ''}, LNS {sec(s.ms.lns)}
         {' '}({s.lns.iterations} попыток, принято {s.lns.accepted}), проверка {sec(s.ms.check)}
       </Text>

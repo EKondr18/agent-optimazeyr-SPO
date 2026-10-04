@@ -1292,6 +1292,41 @@ function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
   return backlog;
 }
 
+// Best-fit construction, aimed at covering as many tasks as possible: tasks
+// in order of END time, each to the qualified person who becomes free the
+// latest before it starts (the smallest idle gap), ties to the person with
+// the fewest qualifications (keeping versatile people free). For
+// interchangeable workers this order is the classic optimal rule for fitting
+// the most fixed intervals; with qualifications and shifts it is a heuristic,
+// but one that packs people's days tightly instead of spreading early tasks
+// thinly and fragmenting everyone's free time — which on days short of staff
+// leaves fewer tasks open than regret. Load balance is left to the
+// improvement search afterwards (it never gives up a placed task).
+function constructBestFit(toAssign, staff, assignedTasks, result, resolver) {
+  const order = [...toAssign].sort((a, b) => a.end - b.end || a.start - b.start);
+  const backlog = [];
+  for (const task of order) {
+    let best = null, bestFree = -Infinity, bestBreadth = Infinity;
+    for (const s of staff) {
+      if (!canTake(s, task, resolver)) continue;
+      const emp = assignedTasks[s.name] || [];
+      if (hasConflict(emp, task, resolver)) continue;
+      let free = s.shiftStart.getTime();
+      for (const t of emp) {
+        const te = t.end.getTime();
+        if (te <= task.start.getTime() && te > free) free = te;
+      }
+      const breadth = s.quals.length;
+      if (free > bestFree || (free === bestFree && breadth < bestBreadth)) {
+        best = s; bestFree = free; bestBreadth = breadth;
+      }
+    }
+    if (best) commit(result, assignedTasks, task.id, best.name);
+    else backlog.push(task);
+  }
+  return backlog;
+}
+
 // windowDates: the planning window (e.g. selectedDate ±1 day) — tasks and
 // staff shifts from any date in this window are assignable together, since
 // shifts and tasks both routinely cross midnight. Defaults to just
@@ -1305,7 +1340,8 @@ function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
 // assignment. Omit it to reset/reassign the whole window as before (the
 // "Запустить оптимизатор" button's behavior).
 //
-// options.construction: 'regret' (default) places first whichever task would
+// options.construction: 'bestfit' — see constructBestFit.
+// 'regret' (default) places first whichever task would
 // lose most if it missed its best employee (see constructRegret); 'greedy'
 // places tasks one by one, hardest first. On the real demo tasks with a
 // generated roster, regret starts from far better assignments and, when staff
@@ -1359,8 +1395,11 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   // the next one keeps winning indefinitely while equally-qualified staff
   // sit idle (distance only breaks ties between similarly-loaded people).
   let backlog = [];
-  if ((options.construction ?? 'regret') === 'regret') {
+  const construction = options.construction ?? 'regret';
+  if (construction === 'regret') {
     backlog = constructRegret(toAssign, staff, assignedTasks, result, resolver, resolveWeights(options.weights));
+  } else if (construction === 'bestfit') {
+    backlog = constructBestFit(toAssign, staff, assignedTasks, result, resolver);
   } else {
     for (const task of toAssign) {
       let bestStaff = null, bestScore = null;
@@ -1881,9 +1920,11 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
 // generously (overtime allowance counted, walking ignored), so the figure
 // never overstates the minimum. Not valid when the policy lets one person do
 // overlapping tasks — then `bound` is null.
-// Returns { bound, noEligible, peak: { at, active, coverable } | null }.
+// Returns { bound, noEligible, peak: { at, active, coverable } | null,
+// bottlenecks: [{ at, active, coverable, deficit }] } — the separate moments
+// the bound adds up, in time order.
 export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) {
-  if (POLICY.sameFlightOverlap) return { bound: null, noEligible: null, peak: null };
+  if (POLICY.sameFlightOverlap) return { bound: null, noEligible: null, peak: null, bottlenecks: [] };
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
   const names = [...new Set(staff.map(s => s.name))];
@@ -1927,7 +1968,7 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) 
   // that starts before the earliest of the running ones ends.
   const byStart = [...pool].sort((a, b) => a.start - b.start);
   let active = [];
-  let best = 0, peak = null;
+  const short = [];
   for (let i = 0; i < byStart.length; i++) {
     const t = byStart[i];
     const now = t.start.getTime();
@@ -1938,9 +1979,29 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) 
     if (next && next.start.getTime() < minEnd) continue;
     const coverable = match(active);
     const deficit = active.length - coverable;
-    if (deficit > best) { best = deficit; peak = { at: new Date(now), active: active.length, coverable }; }
+    if (deficit > 0) short.push({ at: new Date(now), active: active.length, coverable, deficit, ids: active.map(x => x.id) });
   }
-  return { bound: noEligible + best, noEligible, peak };
+  // Separate bottlenecks add up: if two moments share no task, the tasks left
+  // open at one are different tasks from those left open at the other. So
+  // pick moments greedily, worst first, keeping only those that share no task
+  // with one already picked — any such set gives a valid bound, and adding
+  // them up is far tighter than the single worst moment (which ignored, say,
+  // a morning shift-change gap and a late-evening peak on the same day).
+  short.sort((a, b) => b.deficit - a.deficit);
+  const used = new Set();
+  const picked = [];
+  for (const m of short) {
+    if (m.ids.some(id => used.has(id))) continue;
+    for (const id of m.ids) used.add(id);
+    picked.push(m);
+  }
+  const strip = m => (m ? { at: m.at, active: m.active, coverable: m.coverable } : null);
+  return {
+    bound: noEligible + picked.reduce((sum, m) => sum + m.deficit, 0),
+    noEligible,
+    peak: strip(short[0]),
+    bottlenecks: picked.sort((a, b) => a.at - b.at).map(m => ({ ...strip(m), deficit: m.deficit })),
+  };
 }
 
 // ── Full planning run ───────────────────────────────────────────────────────
@@ -1948,17 +2009,34 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) 
 // browser worker, its synchronous fallback and a future backend all run the
 // same pipeline: construction → improvement → bounded LNS → independent
 // check (anything it rejects goes back to the open list) → lower bound.
-// options: weights, lnsBudgetMs (default 3000; 0 skips LNS), seed.
+// options: weights, lnsBudgetMs (default 3000; 0 skips LNS), seed,
+// construction ('auto' default: the better of 'regret' and 'bestfit' after
+// construction; or either one explicitly).
 // Returns { tasks, stats } — stats has the open-task count after each stage,
 // timings, why each search stopped, any violations left (locked tasks only)
 // and the lower bound on open tasks.
 export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { weights, lnsBudgetMs = 3000, seed = 1, lnsOptions } = options;
+  const { weights, lnsBudgetMs = 3000, seed = 1, lnsOptions, construction = 'auto' } = options;
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const openIn = ts => ts.filter(t => dates.includes(t.date) && t.employee === 'Не назначено').length;
   const ms = {};
   let t0 = Date.now();
-  const built = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights });
+  // 'auto': build with both constructions and carry on with the one that
+  // leaves fewer of the selected day's tasks open (ties: regret, which walks
+  // less). Best-fit wins clearly on days short of staff (31.08: 77 vs 93 open
+  // after construction, 75 vs 85 at the end); elsewhere they are within a
+  // task or two. Construction is the cheap part, so this costs about a second.
+  let built, chosen = construction;
+  if (construction === 'auto') {
+    const openDayOf = ts => ts.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
+    const viaRegret = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'regret' });
+    const viaBestFit = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'bestfit' });
+    const useBestFit = openDayOf(viaBestFit) < openDayOf(viaRegret);
+    built = useBestFit ? viaBestFit : viaRegret;
+    chosen = useBestFit ? 'bestfit' : 'regret';
+  } else {
+    built = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction });
+  }
   ms.build = Date.now() - t0; t0 = Date.now();
   const improved = improveAssignment(built, staffDB, selectedDate, resolver, dates, { weights });
   ms.improve = Date.now() - t0; t0 = Date.now();
@@ -1982,6 +2060,7 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
       tasksDay: certified.tasks.filter(t => t.date === selectedDate).length,
       open: { build: openIn(built), improve: openIn(improved.tasks), lns: openIn(lns.tasks), final: openIn(certified.tasks) },
       ms,
+      construction: chosen,
       improveTermination: improved.terminationReason,
       lns: { iterations: lns.iterations, accepted: lns.accepted, terminationReason: lns.terminationReason },
       reopenedByCheck: certified.reopened.length,
