@@ -6,7 +6,7 @@
 // in or extend, arrived at by actually re-running the optimizer with them
 // added — so the dispatcher sees a proposal that accounts for reshuffling
 // the whole day, not just a literal one-task-at-a-time patch.
-import { hasAllQuals, runOptimizer, improveAssignment } from '../optimizer.js';
+import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound } from '../optimizer.js';
 import { packIntoChannels, bucketizeChannels } from './staffDemand.js';
 
 // Merges adjacent same-count buckets into a single interval, so the result
@@ -64,7 +64,10 @@ const CALLIN_WINDOW_MS = 6 * 3600000;
 // nobody holds) can't spin the reoptimization loop forever — repeatedly
 // extending the SAME person for different tasks merges into their one
 // existing action (see below) and doesn't count against this again.
-const MAX_ACTIONS = 40;
+const MAX_ACTIONS = 80;
+// A call-in is trimmed afterwards to the tasks it actually took, but never
+// to less than this paid stretch.
+const MIN_CALLIN_MS = 4 * 3600000;
 const MAX_ITERATIONS = 1000;
 const TIER_ORDER = ['normal', 'tight', 'forced'];
 
@@ -122,35 +125,72 @@ function extensionClear(staff, newStart, newEnd, allShiftsByPerson, bufferMs) {
   });
 }
 
-// Finds the best available way to cover `target`, trying RELAX_TIERS in
-// order and returning the first (tier, action) that works, or null if no
-// tier can find anyone — which only happens when truly nobody in
-// `workingStaff` ∪ `fullRoster` holds the required qualification at all.
-function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson) {
-  for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
-    for (const s of workingStaff) {
-      if (!hasAllQuals(s.quals, target)) continue;
-      // Measured against the shift as originally planned, so repeated
-      // extensions of one person never add up past the cap.
-      const baseStart = s.originalStart ?? s.shiftStart, baseEnd = s.originalEnd ?? s.shiftEnd;
-      const gapAfterShift = target.start - s.shiftEnd;
-      const gapBeforeShift = s.shiftStart - target.end;
-      if (gapAfterShift >= 0 && target.end - baseEnd <= extendMs &&
+// Price of an option, in hours, for choosing between them: the extra hours
+// themselves, plus a fixed price for bringing in someone who is off duty
+// (the call, the trip, a minimum paid stretch), plus a price per relaxation
+// tier. Choosing by price rather than by tier first is what lets a
+// 2 h 10 min earlier start of an existing day shift beat calling in a new
+// person for six hours — on 31.08 the tier-first rule called in 11 people
+// 07:50–13:50 for a two-hour shift-change gap.
+const CALLOUT_PRICE_H = 3;
+const TIER_PRICE_H = { normal: 0, tight: 2, forced: 6 };
+const H = 3600000;
+
+// Every way to cover `target` (extending someone already on shift, earlier
+// or later, or calling in someone off duty), each at the first tier whose
+// rest rule it satisfies, and returns the cheapest — or null when nobody in
+// `workingStaff` ∪ `fullRoster` can take it at all.
+function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson, resolver) {
+  let best = null;
+  // Starting earlier for a task means starting early enough to walk to it
+  // from the shift's start point, or the task still can't be placed.
+  const walkMs = s => {
+    if (!s.basePos || !resolver) return 0;
+    const sec = resolver.secondsBetween(s.basePos, target.entryPos ?? target.pos);
+    return sec == null ? 0 : sec * 1000;
+  };
+  const offer = o => { if (!best || o.price < best.price) best = o; };
+  for (const s of workingStaff) {
+    if (!hasAllQuals(s.quals, target)) continue;
+    // Measured against the shift as originally planned, so repeated
+    // extensions of one person never add up past the cap.
+    const baseStart = s.originalStart ?? s.shiftStart, baseEnd = s.originalEnd ?? s.shiftEnd;
+    // The cap is on the extension as a whole, both ends together.
+    const earlier = baseStart - s.shiftStart, later = s.shiftEnd - baseEnd;
+    for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
+      // also a task that starts inside the shift and runs past its end —
+      // exactly what straddles a shift change
+      if (target.end > s.shiftEnd && target.start >= s.shiftStart && earlier + (target.end - baseEnd) <= extendMs &&
           extensionClear(s, s.shiftStart, target.end, allShiftsByPerson, bufferMs)) {
-        return { type: 'extend', tier, staff: s, direction: 'end', newBound: target.end };
-      }
-      if (gapBeforeShift >= 0 && baseStart - target.start <= extendMs &&
-          extensionClear(s, target.start, s.shiftEnd, allShiftsByPerson, bufferMs)) {
-        return { type: 'extend', tier, staff: s, direction: 'start', newBound: target.start };
+        offer({ type: 'extend', tier, staff: s, direction: 'end', newBound: target.end,
+          price: (target.end - s.shiftEnd) / H + TIER_PRICE_H[tier] });
+        break;
       }
     }
-    for (const p of fullRoster) {
-      if (usedNames.has(p.name) || !hasAllQuals(p.quals, target)) continue;
-      const window = callInWindow(p, target, allShiftsByPerson, bufferMs);
-      if (window) return { type: 'callin', tier, candidate: p, window };
+    // (rounded down: a fractional millisecond would be dropped by Date and land
+    // the start a hair too late for the check)
+    const newStart = new Date(Math.floor(target.start.getTime() - walkMs(s)));
+    for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
+      if (newStart < s.shiftStart && target.end <= s.shiftEnd && (baseStart - newStart) + later <= extendMs &&
+          extensionClear(s, newStart, s.shiftEnd, allShiftsByPerson, bufferMs)) {
+        offer({ type: 'extend', tier, staff: s, direction: 'start', newBound: newStart,
+          price: (s.shiftStart - newStart) / H + TIER_PRICE_H[tier] });
+        break;
+      }
     }
   }
-  return null;
+  for (const p of fullRoster) {
+    if (usedNames.has(p.name) || !hasAllQuals(p.quals, target)) continue;
+    for (const { tier, bufferMs } of RELAX_TIERS) {
+      const window = callInWindow(p, target, allShiftsByPerson, bufferMs);
+      if (window) {
+        offer({ type: 'callin', tier, candidate: p, window,
+          price: MIN_CALLIN_MS / H + CALLOUT_PRICE_H + TIER_PRICE_H[tier] });
+        break;
+      }
+    }
+  }
+  return best;
 }
 
 // Builds a plan to resolve `targetDate`'s backlog by proposing, one at a
@@ -192,7 +232,7 @@ export function resolveStaffingWithCallIns({
     const target = backlog[0];
     if (!target) break;
 
-    const picked = findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson);
+    const picked = findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPerson, distanceResolver);
     if (!picked) { skipIds.add(target.id); continue; }
 
     if (picked.type === 'extend') {
@@ -256,6 +296,72 @@ export function resolveStaffingWithCallIns({
     }).tasks;
   }
 
+  trimActions(actions, currentTasks, dates, workingStaff, distanceResolver);
+
   const unresolved = currentTasks.filter(t => dates.includes(t.date) && t.employee === 'Не назначено');
-  return { actions, tasks: currentTasks, unresolved, baselineTasks };
+  // The least extra staff the day needs at once, whatever is proposed: at
+  // each separate bottleneck, how many more simultaneous tasks there are
+  // than people on shift who can take them (see unassignedLowerBound).
+  // Tasks nobody anywhere (on shift or in the roster) is qualified for are
+  // counted apart — no extra person helps with those.
+  const qualifiedSomewhere = t =>
+    (staffDB[targetDate] || []).some(s => hasAllQuals(s.quals, t)) || fullRoster.some(p => hasAllQuals(p.quals, t));
+  const dayTasks = baselineTasks.filter(t => t.date === targetDate);
+  const bound = unassignedLowerBound(dayTasks.filter(qualifiedSomewhere), staffDB, targetDate, [targetDate], { keepUncovered: true });
+  const minExtra = (bound.bottlenecks || []).map(b => ({ at: b.at, people: b.deficit, active: b.active }));
+  const noEligible = dayTasks.filter(t => !qualifiedSomewhere(t)).length;
+  return { actions, tasks: currentTasks, unresolved, baselineTasks, minExtra, noEligible };
+}
+
+// Shrinks every proposal to what it is actually used for once the plan is
+// final: a call-in to the span of the tasks it took (at least the minimum
+// paid stretch, never beyond the window it was offered), an extension back
+// towards the original shift wherever the extra time took no task — and a
+// proposal that took nothing at all is dropped. Assignments stay valid: each
+// remaining interval still covers every task placed in it.
+function trimActions(actions, tasks, dates, workingStaff, resolver) {
+  // An earlier start must still leave the walk from the shift's start point
+  // to the first task (the same hard check fitsShift applies).
+  // (A person can have two shifts on one date with different start points —
+  // the walk is measured from the shift being extended.)
+  const walkMs = (a, task) => {
+    const s = workingStaff.find(x => x.name === a.name &&
+      (x.originalStart ?? x.shiftStart).getTime() === a.originalStart.getTime());
+    if (!s?.basePos || !resolver) return 0;
+    const sec = resolver.secondsBetween(s.basePos, task.entryPos ?? task.pos);
+    return sec == null ? 0 : sec * 1000;
+  };
+  const byName = new Map();
+  for (const t of tasks) {
+    if (!dates.includes(t.date) || t.employee === 'Не назначено') continue;
+    if (!byName.has(t.employee)) byName.set(t.employee, []);
+    byName.get(t.employee).push(t);
+  }
+  for (let i = actions.length - 1; i >= 0; i--) {
+    const a = actions[i];
+    const inside = (byName.get(a.name) || []).filter(t => t.start >= a.shiftStart && t.end <= a.shiftEnd);
+    if (a.type === 'callin') {
+      if (inside.length === 0) { actions.splice(i, 1); continue; }
+      const first = Math.min(...inside.map(t => t.start.getTime()));
+      const last = Math.max(...inside.map(t => t.end.getTime()));
+      const start = Math.max(a.shiftStart.getTime(), first);
+      const end = Math.min(a.shiftEnd.getTime(), Math.max(last, start + MIN_CALLIN_MS));
+      a.shiftStart = new Date(start);
+      a.shiftEnd = new Date(end);
+    } else {
+      const after = inside.filter(t => t.end > a.originalEnd);
+      // The start must leave the walk to the first task — even one that starts
+      // after the original start but too soon after it to walk there.
+      const need = inside.length
+        ? Math.floor(Math.min(...inside.map(t => t.start.getTime() - walkMs(a, t))))
+        : Infinity;
+      const start = need < a.originalStart.getTime()
+        ? Math.max(a.shiftStart.getTime(), need)
+        : a.originalStart.getTime();
+      const end = after.length ? Math.max(...after.map(t => t.end.getTime())) : a.originalEnd.getTime();
+      if (start >= a.originalStart.getTime() && end <= a.originalEnd.getTime()) { actions.splice(i, 1); continue; }
+      a.shiftStart = new Date(Math.min(start, a.originalStart.getTime()));
+      a.shiftEnd = new Date(Math.max(end, a.originalEnd.getTime()));
+    }
+  }
 }

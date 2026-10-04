@@ -256,3 +256,24 @@ test('batch update: corrections inside the frozen hour are applied and repaired,
     }
   }
 });
+
+test('call-in plan: an earlier start of a day shift beats calling someone in, and proposals are trimmed', () => {
+  const day = { name: 'DAY', quals: ['Q1'], shiftStart: D(10), shiftEnd: D(18), basePos: null };
+  const r = resolveStaffingWithCallIns({
+    tasksDB: [mk('gap', 8, 30, 9, 30, 'Q1')], staffDB: db(day), targetDate: DATE, windowDates: WIN,
+    fullRoster: [{ name: 'OFF', quals: ['Q1'] }], allShiftsByPerson: new Map(), distanceResolver: null,
+  });
+  assert.equal(r.unresolved.length, 0);
+  assert.deepEqual(r.actions.map(a => [a.type, a.name]), [['extend', 'DAY']]);
+  assert.equal(r.actions[0].shiftStart.getTime(), D(8, 30).getTime()); // exactly as early as the task needs
+  assert.ok(r.minExtra.length === 1 && r.minExtra[0].people === 1);
+
+  // nobody on shift: a call-in, trimmed from the 6 h offer to the 4 h minimum
+  const c = resolveStaffingWithCallIns({
+    tasksDB: [mk('lone', 9, 0, 9, 30, 'Q1')], staffDB: db(), targetDate: DATE, windowDates: WIN,
+    fullRoster: [{ name: 'OFF', quals: ['Q1'] }], allShiftsByPerson: new Map(), distanceResolver: null,
+  });
+  assert.equal(c.actions.length, 1);
+  assert.equal(c.actions[0].type, 'callin');
+  assert.equal(c.actions[0].shiftEnd - c.actions[0].shiftStart, 4 * 3600000);
+});

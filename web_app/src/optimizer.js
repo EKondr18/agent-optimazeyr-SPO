@@ -6,6 +6,9 @@ const MIN_TRANSITION_POS_DIST = 5;
 // a hand-off is never accepted (it is a hard conflict), but cost arithmetic
 // must stay finite wherever a pair is merely being considered.
 const UNREACHABLE_PENALTY_M = 10000;
+// Walk times come from metres / speed and carry floating-point noise
+// (748800.0000000001 ms); a gap equal to the walk up to this much is enough.
+const WALK_EPS_MS = 1;
 
 // ── Operating policy ────────────────────────────────────────────────────────
 // Business rules that are a decision, not a fact of the data, kept in one
@@ -117,7 +120,7 @@ function hasInsufficientGap(a, b, resolver) {
   // Infinity (no path at all) makes any gap insufficient.
   const neededSeconds = travelSeconds(resolver, exitPos, entryPos);
   if (neededSeconds != null) {
-    return gapMs < neededSeconds * 1000;
+    return gapMs < neededSeconds * 1000 - WALK_EPS_MS;
   }
   return gapMs < MIN_TRANSITION_MS && getPosDistance(exitPos, entryPos) >= MIN_TRANSITION_POS_DIST;
 }
@@ -158,7 +161,7 @@ export function fitsShift(shift, task, resolver, allowOvertime = false) {
   }
   if (shift.basePos) {
     const sec = travelSeconds(resolver, shift.basePos, task.entryPos ?? task.pos);
-    if (sec != null && ts - ss < sec * 1000) return false;
+    if (sec != null && ts - ss < sec * 1000 - WALK_EPS_MS) return false;
   }
   return true;
 }
@@ -1923,7 +1926,12 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
 // Returns { bound, noEligible, peak: { at, active, coverable } | null,
 // bottlenecks: [{ at, active, coverable, deficit }] } — the separate moments
 // the bound adds up, in time order.
-export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) {
+//
+// options.keepUncovered: keep tasks nobody on shift can take inside the
+// moments instead of counting them apart — what "how many more people are
+// needed at once" wants, since a task with no one on shift at its time is
+// exactly a moment that needs one more person.
+export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates, options = {}) {
   if (POLICY.sameFlightOverlap) return { bound: null, noEligible: null, peak: null, bottlenecks: [] };
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
@@ -1939,7 +1947,7 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) 
     for (const s of staff) {
       if (hasAllQuals(s.quals, t) && (fitsShift(s, t, null, false) || fitsShift(s, t, null, true))) set.add(nameIdx.get(s.name));
     }
-    if (set.size === 0) { noEligible++; continue; }
+    if (set.size === 0 && !options.keepUncovered) { noEligible++; continue; }
     elig.set(t.id, [...set]);
     pool.push(t);
   }
