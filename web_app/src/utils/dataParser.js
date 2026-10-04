@@ -415,8 +415,16 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
 
   for (const s of shifts || []) {
     const resource = resourceMap.get(String(s.resource_ref));
-    // Only staff whose home department is SPO belong in this optimizer's pool.
-    if (!resource || resource.default_department_ref !== 'SPO') continue;
+    if (!resource) continue;
+    // A cancelled shift is not capacity.
+    if (String(s.shift_state_ref || '').toUpperCase() === 'CANCELED') continue;
+    // The shift says which department the person works for that day: an SPO
+    // employee on an audit shift is not in the SPO pool, someone lent from
+    // another department onto an SPO shift is. The home department only
+    // decides when the shift itself doesn't say (empty or '*'). Confirmed
+    // against the full tb_shifts export: both mismatches occur.
+    const shiftDept = s.department_ref && s.department_ref !== '*' ? s.department_ref : null;
+    if ((shiftDept ?? resource.default_department_ref) !== 'SPO') continue;
 
     const shiftStart = s.scheduled_start ? new Date(s.scheduled_start) : null;
     const shiftEnd = s.scheduled_end ? new Date(s.scheduled_end) : null;
