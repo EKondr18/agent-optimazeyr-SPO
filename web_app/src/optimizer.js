@@ -291,6 +291,32 @@ function mergeStaffWindow(staffDB, dates) {
 // explicit budget: a depth limit and a cap on how many employees one search may
 // open in total. Running out means "not found within the budget", not
 // "impossible".
+// Every task of an (unordered) list that conflicts with `task`, looking
+// closely only at those near it in time: anything starting later than the
+// longest walk after it ends, or ending earlier than that before it starts,
+// can only conflict through a missing path — so of those, only the nearest
+// one on each side is checked (as conflictsSorted does), plus anomalously
+// long tasks. Same answer as filtering with conflictsWith on a valid plan.
+function conflictsInWindow(list, task, resolver, bounds) {
+  const out = [];
+  const ts = task.start.getTime(), te = task.end.getTime();
+  let before = null, after = null;
+  for (const x of list) {
+    const xs = x.start.getTime(), xe = x.end.getTime();
+    const far = xs >= te + bounds.after || xe + bounds.after <= ts;
+    if (!far || xe - xs > bounds.longMs) {
+      if (conflictsWith(x, task, resolver)) out.push(x);
+    } else if (resolver) {
+      if (xs >= te) { if (!after || xs < after.start.getTime()) after = x; }
+      else if (!before || xe > before.end.getTime()) before = x;
+    }
+  }
+  for (const x of [before, after]) {
+    if (x && !out.includes(x) && conflictsWith(x, task, resolver)) out.push(x);
+  }
+  return out;
+}
+
 const CHAIN_MAX_DEPTH = 4;
 const CHAIN_NODE_BUDGET = 100;
 function findChainPlacement(task, staffByLoad, assigned, resolver, visited, isBumpable = t => !t.isLocked,
@@ -300,7 +326,9 @@ function findChainPlacement(task, staffByLoad, assigned, resolver, visited, isBu
     if (!canTake(s, task, resolver)) continue;
 
     const empTasks = assigned[s.name] || [];
-    const conflicts = empTasks.filter(ct => conflictsWith(ct, task, resolver));
+    const conflicts = budget.bounds
+      ? conflictsInWindow(empTasks, task, resolver, budget.bounds)
+      : empTasks.filter(ct => conflictsWith(ct, task, resolver));
 
     if (conflicts.length === 0) {
       return { assigned: { ...assigned, [s.name]: [...empTasks, task] }, migrations: [{ task, to: s.name }] };
@@ -771,8 +799,28 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 //   deadline         — epoch ms; the search stops there with whatever it has
 //                      (every intermediate state is a valid plan), and
 //                      terminationReason says 'deadline' instead of 'converged'
+//   confirmRound     — default true: after the pruned search stops, one full
+//                      unpruned round confirms a true local optimum. It only
+//                      catches a rare case (see below) and costs as much as
+//                      the rest, so batch updates on a deadline skip it
+//   moveCost         — task => cost units; the price of taking an already
+//                      assigned task away from the employee it had on input
+//                      (moving it back refunds it). A published plan has a
+//                      value of its own: without this, every batch of changes
+//                      reshuffled hundreds of unrelated assignments for tiny
+//                      gains. Default: no price (a full planning run).
 export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { frozenBefore, priorityUntil, weights, deadline } = options;
+  const { frozenBefore, priorityUntil, weights, deadline, moveCost, confirmRound = true } = options;
+  const originalEmp = new Map();
+  if (moveCost) for (const t of tasks) if (t.employee !== 'Не назначено') originalEmp.set(t.id, t.employee);
+  // Change in the disruption price if `task` goes from `from` to `to`.
+  const churn = moveCost
+    ? (task, from, to) => {
+      const orig = originalEmp.get(task.id);
+      if (orig === undefined) return 0;
+      return (to === orig ? 0 : moveCost(task)) - (from === orig ? 0 : moveCost(task));
+    }
+    : () => 0;
   const overDeadline = () => deadline != null && Date.now() > deadline;
   const W = resolveWeights(weights);
   const scope = options.scopeEmployees ? new Set(options.scopeEmployees) : null;
@@ -1013,7 +1061,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       const staffByLoad = [...staff].sort(
         (a, b) => (byEmp[a.name] || []).length - (byEmp[b.name] || []).length
       );
-      const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable);
+      const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable, { left: CHAIN_NODE_BUDGET, bounds });
       if (!chain) { chainFailedAt.set(task.id, chainStamp(task)); continue; }
       for (const { task: mt, to } of chain.migrations) {
         const idx = indexById.get(mt.id);
@@ -1072,9 +1120,9 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
 
             // Relocate `task` to B. Lower bound on the delta: B's extra load
             // cost minus what A saves.
-            if (!(prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) >= -EPS) &&
+            if (!(prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) + churn(task, A, B) >= -EPS) &&
                 !conflictsSorted(bTasks, task, resolver, bounds)) {
-              const delta = W.load * (2 * (bTasks.length - aTasks.length) + 2) - gainA + insertParts(B, bTasks, task);
+              const delta = W.load * (2 * (bTasks.length - aTasks.length) + 2) - gainA + insertParts(B, bTasks, task) + churn(task, A, B);
               if (delta < -EPS) {
                 foundHere = true;
                 if (!best || delta < best.delta) best = { kind: 'relocate', B, delta };
@@ -1084,13 +1132,14 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
             // Swap `task` with a movable task of B's.
             for (const other of bTasks) {
               if (!isMovable(other)) continue;
-              if (prune && gainA + walkGain(B, other) <= EPS) continue;
+              if (prune && gainA + walkGain(B, other) - churn(task, A, B) - churn(other, B, A) <= EPS) continue;
               if (!staticFits(A, other)) continue;
               const bRest = bTasks.filter(t => t.id !== other.id);
               if (conflictsSorted(bRest, task, resolver, bounds) || conflictsSorted(aRest, other, resolver, bounds)) continue;
               const delta =
                 linkRemove(A, aTasks, task) + linkInsert(A, aRest, other) + overtimeOf(A, aRest, other) - overCurrent(A) +
-                linkRemove(B, bTasks, other) + linkInsert(B, bRest, task) + overtimeOf(B, bRest, task) - overCurrent(B);
+                linkRemove(B, bTasks, other) + linkInsert(B, bRest, task) + overtimeOf(B, bRest, task) - overCurrent(B) +
+                churn(task, A, B) + churn(other, B, A);
               if (delta < -EPS) {
                 foundHere = true;
                 if (!best || delta < best.delta) best = { kind: 'swap', B, other, delta };
@@ -1121,7 +1170,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
         }
       }
     }
-    if (!progress && prune && !stopped) { prune = false; seenByTask.clear(); progress = true; }
+    if (!progress && prune && !stopped && confirmRound) { prune = false; seenByTask.clear(); progress = true; }
   }
 
   return { tasks: result, moves, touched: touchedList(), terminationReason: stopped ? 'deadline' : 'converged' };
@@ -1337,11 +1386,12 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   // alphabetically/positionally doesn't soak up every task that falls
   // through to this pass.
   let remaining = [];
+  const passBounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
   for (const task of backlog) {
     const staffByLoad = [...staff].sort(
       (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
     );
-    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), t => !isFrozen(t));
+    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), t => !isFrozen(t), { left: CHAIN_NODE_BUDGET, bounds: passBounds });
     if (chain) {
       assignedTasks = chain.assigned;
       for (const { task: mt, to } of chain.migrations) {
@@ -1383,6 +1433,10 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
 }
 
 const MIN_DATE = new Date(-8.64e15);
+// Default price, in cost units, of moving an already-published assignment
+// during an incremental update (×3 inside the stability window). For scale:
+// one step of load balance is 200–300 units, walking is 1 unit per metre.
+const STABILITY_MOVE_COST = 300;
 const MAX_DATE = new Date(8.64e15);
 
 // Incremental update for a batch of task changes — the entry point a backend
@@ -1415,14 +1469,17 @@ const MAX_DATE = new Date(8.64e15);
 //                        frontend's delay module does). Default false: purely
 //                        incremental.
 //   escalate           — default true. If a changed task is still without an
-//                        employee after the incremental repair (the local
-//                        chains weren't deep enough), fall back to a fuller
-//                        re-optimization and keep it only if it leaves fewer
-//                        tasks open. With `now` given this rebuilds only what
-//                        starts beyond the stability window — the near term
-//                        is never churned for it; without `now` there is no
-//                        horizon, so it rebuilds the whole window (and can
-//                        move a lot to place one task)
+//                        employee after the incremental repair, run a short
+//                        coverage-only LNS around exactly those tasks
+//                        (escalateBudgetMs, default 0.5 s) and keep it only if
+//                        it places more of them. Never touches the frozen
+//                        window, never reshuffles for cost.
+//   improveBudgetMs    — time limit of the incremental improvement search
+//                        (default 1.5 s); placing the changed tasks always
+//                        comes first, the polishing after it is what may be cut
+//   stability          — price of moving a published assignment (default
+//                        300 cost units, ×3 inside the stability window);
+//                        0 = no price, every improvement is taken
 //   weights, construction — see improveAssignment / runOptimizer
 //
 // Returns { tasks, touched, changedIds, unplaced, repairs, escalated }:
@@ -1432,8 +1489,13 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
   const {
     now, frozenWindowMs = 3600000, stabilityWindowMs = 3 * 3600000,
     farReshuffle = false, escalate = true, weights, construction,
+    stability = STABILITY_MOVE_COST, escalateBudgetMs = 500, improveBudgetMs = 1500,
   } = options;
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  // Wall-clock per stage, returned for monitoring (the backend's latency budget).
+  const ms = {};
+  let tick = Date.now();
+  const lap = name => { const t = Date.now(); ms[name] = t - tick; tick = t; };
   const frozenBefore = now ? new Date(now.getTime() + frozenWindowMs) : undefined;
   const stabilityEnd = now ? new Date(now.getTime() + stabilityWindowMs) : undefined;
 
@@ -1482,6 +1544,7 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     result = runOptimizer(result, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
   }
 
+  lap('prepare');
   // 4. Repair conflicts the changes caused. Nothing before `now` moves.
   const repair = patchConflicts(result, staffDB, selectedDate, resolver, dates, now ?? MIN_DATE, MAX_DATE);
   result = repair.tasks;
@@ -1496,9 +1559,18 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     if (t && t.employee !== 'Не назначено') touched.add(t.employee);
   }
 
+  lap('repair');
   // 5. Place what's still open and improve from the affected employees outward.
+  //    In incremental mode every move of an already-published assignment
+  //    has a price (more in the stability window), so the plan around the
+  //    change only shifts where that clearly pays — not for every small gain.
+  const moveCost = !farReshuffle && stability > 0
+    ? t => (stabilityEnd && t.start < stabilityEnd ? 3 * stability : stability)
+    : undefined;
   const improved = improveAssignment(result, staffDB, selectedDate, resolver, dates, {
-    weights, frozenBefore, priorityUntil: stabilityEnd,
+    weights, frozenBefore, priorityUntil: stabilityEnd, moveCost,
+    confirmRound: farReshuffle,
+    deadline: farReshuffle ? undefined : Date.now() + improveBudgetMs,
     scopeEmployees: farReshuffle ? undefined : touched,
     scopeTaskIds: farReshuffle ? undefined : placeIds,
   });
@@ -1508,19 +1580,24 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     .filter(t => placeIds.has(t.id) && t.employee === 'Не назначено')
     .map(t => t.id);
 
+  lap('improve');
   let finalTasks = improved.tasks;
   let escalated = false;
   if (escalate && !farReshuffle && unplacedOf(finalTasks).length > 0) {
-    const rebuilt = runOptimizer(finalTasks, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
-    const polished = improveAssignment(rebuilt, staffDB, selectedDate, resolver, dates, {
-      weights, frozenBefore, priorityUntil: stabilityEnd,
-    }).tasks;
-    if (openIn(polished) < openIn(finalTasks)) { finalTasks = polished; escalated = true; }
+    // Targeted group moves around exactly the tasks still open, kept only
+    // when they place more of them — not a rebuild of the rest of the day.
+    const lns = lnsImprove(finalTasks, staffDB, selectedDate, resolver, dates, {
+      weights, frozenBefore, coverageOnly: true, focusIds: unplacedOf(finalTasks),
+      timeBudgetMs: escalateBudgetMs, removeSizes: [4, 8, 16], destroyPeople: 4, stallIterations: 25,
+    });
+    if (openIn(lns.tasks) < openIn(finalTasks)) { finalTasks = lns.tasks; escalated = true; }
   }
 
+  lap('escalate');
   // 6. Nothing is handed back that the independent check rejects.
   const certified = certifyPlan(finalTasks, staffDB, selectedDate, resolver, dates, { keepBefore: now, mutableIds: changedIds });
   for (const id of certified.reopened) placeIds.add(id);
+  lap('check');
 
   return {
     tasks: certified.tasks,
@@ -1531,6 +1608,7 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     escalated,
     needsDecision,
     violations: certified.remaining,
+    ms,
   };
 }
 
@@ -1552,7 +1630,12 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
 //
 // options: timeBudgetMs (default 2000), maxIterations, seed (same seed + same
 // input = same result), frozenBefore (tasks starting earlier never move),
-// weights, removeSizes (default [4, 8, 16]).
+// weights, removeSizes (default [4, 8, 16]), destroyPeople (default 3),
+// focusDates (open tasks of these dates are targeted first), coverageOnly
+// (only try to place open tasks — focusIds, if given — and accept a change
+// only when it places more; used to repair a batch update without
+// reshuffling the plan for cost), stallIterations (stop after this many
+// attempts in a row without an accepted change).
 // Returns { tasks, iterations, accepted, terminationReason }.
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -1568,7 +1651,8 @@ function mulberry32(seed) {
 export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
   const {
     timeBudgetMs = 2000, maxIterations = Infinity, seed = 1, frozenBefore, weights,
-    removeSizes = [4, 8, 16], destroyPeople = 3, focusDates,
+    removeSizes = [4, 8, 16], destroyPeople = 3, focusDates, coverageOnly = false, focusIds,
+    stallIterations = Infinity,
   } = options;
   const W = resolveWeights(weights);
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
@@ -1578,6 +1662,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
 
   const deadline = Date.now() + timeBudgetMs;
   const rnd = mulberry32(seed);
+  const lnsBounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
   const pick = arr => arr[Math.floor(rnd() * arr.length)];
   const OPEN = 'Не назначено';
   const inWin = t => dates.includes(t.date);
@@ -1622,7 +1707,8 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
 
   // ── destroy ──
   const destroyConflict = k => {
-    const candidates = [...openSet].filter(id => eligibleOf(byId.get(id)).length > 0);
+    const candidates = [...openSet].filter(id =>
+      eligibleOf(byId.get(id)).length > 0 && (!focusIds || focusIds.includes(id)));
     if (candidates.length === 0) return null;
     // Open tasks of the dates that matter most (the selected day) first.
     const focused = focusDates ? candidates.filter(id => focusDates.includes(byId.get(id).date)) : [];
@@ -1707,7 +1793,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     for (const id of unplaced) {
       const t = byId.get(id);
       const staffByLoad = [...staff].sort((a, b) => (cand[a.name] || []).length - (cand[b.name] || []).length);
-      const chain = findChainPlacement(t, staffByLoad, cand, resolver, new Set(), canMove, { left: 60 });
+      const chain = findChainPlacement(t, staffByLoad, cand, resolver, new Set(), canMove, { left: 60, bounds: lnsBounds });
       if (!chain) { still.push(id); continue; }
       for (const n of Object.keys(chain.assigned)) {
         if (chain.assigned[n] !== cand[n]) cand[n] = [...chain.assigned[n]].sort((a, b) => a.start - b.start);
@@ -1717,7 +1803,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
   };
   const conflictsUnsorted = (list, t) => list.some(x => conflictsWith(x, t, resolver));
 
-  let iterations = 0, accepted = 0;
+  let iterations = 0, accepted = 0, sinceAccept = 0;
   let terminationReason = 'budget';
   while (iterations < maxIterations) {
     if (Date.now() > deadline) { terminationReason = 'deadline'; break; }
@@ -1725,10 +1811,15 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     const k = pick(removeSizes);
     const r = rnd();
     let d;
-    if (openSet.size > 0 && r < 0.5) d = destroyConflict(k);
-    else if (r < 0.8) d = destroyRelated(k);
-    else d = destroyRandom(k);
-    if (!d) d = destroyRelated(k) || destroyRandom(k);
+    if (coverageOnly) {
+      d = destroyConflict(k);
+      if (!d) { terminationReason = 'nothing-to-place'; break; }
+    } else {
+      if (openSet.size > 0 && r < 0.5) d = destroyConflict(k);
+      else if (r < 0.8) d = destroyRelated(k);
+      else d = destroyRandom(k);
+      if (!d) d = destroyRelated(k) || destroyRandom(k);
+    }
     if (!d || (d.removed.length === 0 && d.targets.length === 0)) { terminationReason = 'nothing-to-move'; break; }
 
     const cand = { ...lists };
@@ -1753,8 +1844,12 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
       newCosts.set(n, c);
       delta += c - (empCost.get(n) ?? 0);
     }
-    const better = newOpen.size < openBefore || (newOpen.size === openBefore && delta < -1e-6);
-    if (!better) continue;
+    const better = newOpen.size < openBefore || (!coverageOnly && newOpen.size === openBefore && delta < -1e-6);
+    if (!better) {
+      if (++sinceAccept >= stallIterations) { terminationReason = 'stalled'; break; }
+      continue;
+    }
+    sinceAccept = 0;
 
     accepted++;
     for (const n of changed) {
