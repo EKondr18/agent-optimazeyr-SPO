@@ -97,5 +97,19 @@ export function createDistanceResolver({ locations, travelEdges }) {
     return meters == null ? null : meters / WALK_SPEED_MPS;
   }
 
-  return { metersBetween, secondsBetween, nodeMap, graph };
+  // metersBetween's null covers two different facts: a stand missing from
+  // tb_location (unknown — the optimizer falls back to its heuristic) and two
+  // stands that are both in the network with no path between them (known to
+  // be unreachable — a hand-off between them is impossible, not "close").
+  // true / false / null (unknown).
+  function reachable(pos1, pos2) {
+    const n1 = nodeMap.get(String(pos1));
+    const n2 = nodeMap.get(String(pos2));
+    if (!n1 || !n2) return null;
+    if (n1 === n2) return true;
+    if (!cache.has(n1)) cache.set(n1, dijkstraFrom(graph, n1));
+    return cache.get(n1).has(n2);
+  }
+
+  return { metersBetween, secondsBetween, reachable, nodeMap, graph };
 }
