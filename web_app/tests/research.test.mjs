@@ -165,6 +165,8 @@ test('property: every entry point yields only plans the validator accepts', () =
     const { tasks, staff } = randomInstance(seed);
     const built = runOptimizer(tasks, staff, DATE, null, WIN);
     assert.deepEqual(validatePlan(built, staff, DATE, null, WIN), [], `runOptimizer seed ${seed}`);
+    const packed = runOptimizer(tasks, staff, DATE, null, WIN, undefined, { construction: 'bestfit' });
+    assert.deepEqual(validatePlan(packed, staff, DATE, null, WIN), [], `bestfit seed ${seed}`);
     const imp = improveAssignment(built, staff, DATE, null, WIN).tasks;
     assert.deepEqual(validatePlan(imp, staff, DATE, null, WIN), [], `improve seed ${seed}`);
     const lns = lnsImprove(imp, staff, DATE, null, WIN, { maxIterations: 60, seed }).tasks;
