@@ -17,7 +17,7 @@ import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
 import {
   applyChanges, planWindow, DEFAULT_WEIGHTS, DEFAULT_POLICY, setPolicy, findConflicts, hasAllQuals,
-  fitsShift, requiredQuals,
+  fitsShift, requiredQuals, validatePlan,
 } from './optimizer';
 import { dataQualityReport } from './utils/dataQuality';
 import PlanReport from './components/PlanReport';
@@ -231,7 +231,7 @@ function SidebarContent({
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, selectedDate, setSelectedDate,
   handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
-  policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec,
+  policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   onClose,
 }) {
@@ -455,6 +455,18 @@ function SidebarContent({
                   onChange={v => setPolicyState(p => ({ ...p, sameFlightOverlap: v }))}
                 />
               </div>
+              <div style={{ marginTop: 6 }}>
+                <Text style={{ fontSize: 12 }} title="Задачи с этими допусками будут назначаться и без них — только если так решено (например, ни у кого в справочнике нет допуска). Каждое такое назначение показывается в отчёте">
+                  Назначать без допуска
+                </Text>
+                <Select
+                  mode="multiple" size="small" allowClear style={{ width: '100%', marginTop: 2 }}
+                  placeholder="нет — все допуски обязательны"
+                  value={policy.waivedQuals}
+                  onChange={v => setPolicyState(p => ({ ...p, waivedQuals: v }))}
+                  options={qualOptions}
+                />
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
                 <Text style={{ fontSize: 12 }} title="Сколько секунд дополнительно искать перестановки групп задач (LNS) после основного прохода. 0 — не искать">
                   Доп. поиск (LNS), сек
@@ -584,6 +596,17 @@ export default function App() {
     () => [...new Set(tasksDB.map(t => t.date))].sort(),
     [tasksDB]
   );
+  // Every qualification the tasks require; the ones nobody holds come first
+  // and are marked — those are the candidates for "assign without".
+  const qualOptions = useMemo(() => {
+    const req = new Map();
+    for (const t of tasksDB) for (const q of requiredQuals(t)) req.set(q, (req.get(q) || 0) + 1);
+    const held = new Set([...Object.values(staffDB).flat(), ...fullRoster].flatMap(s => s.quals || []));
+    return [...req.entries()]
+      .sort((a, b) => Number(held.has(a[0])) - Number(held.has(b[0])) || b[1] - a[1])
+      .map(([q, n]) => ({ value: q, label: held.has(q) ? `${q} (${n})` : `${q} (${n}) — ни у кого нет` }));
+  }, [tasksDB, staffDB, fullRoster]);
+
   // What in the loaded data makes tasks unassignable regardless of the
   // optimizer. Depends only on the data's shape, not on assignments.
   const dataQuality = useMemo(
@@ -1039,6 +1062,49 @@ export default function App() {
     setTasksDB(resolved);
   }
 
+  // Turns the call-in plan into the schedule: each proposed earlier start /
+  // later end replaces that shift (in every date bucket it touches, now
+  // possibly one more across midnight), each call-in becomes a new shift, and
+  // the tasks take the plan's assignments. Checked against the new shifts
+  // before anything is replaced.
+  function handleApplyCallInPlan(resolution) {
+    const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const daysOf = (a, b) => {
+      const out = [];
+      const cur = new Date(a); cur.setHours(0, 0, 0, 0);
+      const end = new Date(b); end.setHours(0, 0, 0, 0);
+      while (cur <= end) { out.push(ymd(cur)); cur.setDate(cur.getDate() + 1); }
+      return out;
+    };
+    const db = Object.fromEntries(Object.entries(staffDB).map(([d, list]) => [d, [...list]]));
+    const place = obj => {
+      for (const d of daysOf(obj.shiftStart, obj.shiftEnd)) (db[d] ??= []).push(obj);
+    };
+    for (const a of resolution.actions) {
+      if (a.type === 'extend') {
+        let original = null;
+        for (const list of Object.values(db)) {
+          const i = list.findIndex(s => s.name === a.name && s.shiftStart.getTime() === a.originalStart.getTime());
+          if (i >= 0) { original = list[i]; list.splice(i, 1); }
+        }
+        if (!original) continue;
+        place({ ...original, shiftStart: a.shiftStart, shiftEnd: a.shiftEnd, planned: { start: a.originalStart, end: a.originalEnd } });
+      } else {
+        const person = fullRoster.find(p => p.name === a.name);
+        place({ name: a.name, quals: person?.quals || [], zone: 'APRON', shiftStart: a.shiftStart, shiftEnd: a.shiftEnd, basePos: null, callIn: true });
+      }
+    }
+    const violations = validatePlan(resolution.tasks, db, selectedDate, distanceResolver, windowDates);
+    if (violations.length > 0) {
+      message.error(`План не применён: ${violations.length} нарушений правил после применения — пересчитайте план`);
+      return;
+    }
+    setStaffDB(db);
+    setTasksDB(resolution.tasks);
+    const open = resolution.tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено').length;
+    message.success(`План применён: ${resolution.actions.length} изменений смен. Без исполнителя осталось ${open}.`);
+  }
+
   function handleAssign(taskId, employeeName, lock) {
     setTasksDB(prev =>
       prev.map(t => t.id === taskId ? { ...t, employee: employeeName, isLocked: lock } : t)
@@ -1131,7 +1197,7 @@ export default function App() {
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, selectedDate, setSelectedDate,
     handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
-    policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec,
+    policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   };
 
@@ -1281,6 +1347,7 @@ export default function App() {
           allShiftsByPerson={allShiftsByPerson}
           distanceResolver={distanceResolver}
           isDark={isDark}
+          onApply={handleApplyCallInPlan}
         />
       ),
     },

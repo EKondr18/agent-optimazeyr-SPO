@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Typography, Empty, Alert, Segmented, Tag } from 'antd';
+import { Typography, Empty, Alert, Segmented, Tag, Button } from 'antd';
 import Plot from 'react-plotly.js';
 import { computeStaffingGaps } from '../utils/staffingGap';
 import { GRANULARITY_OPTIONS } from '../utils/staffDemand';
@@ -26,6 +26,21 @@ function fmtHours(ms) {
 // and "forced" mean the rules had to bend to guarantee someone is proposed
 // at all, and the color/label makes that visible so the dispatcher knows
 // which picks to double-check rather than accept blindly.
+const UNRESOLVED_INFO = {
+  NO_QUAL: {
+    title: 'Ни у кого нет допуска',
+    hint: 'Ни на смене, ни в ростере нет никого с этой квалификацией. Закрыть можно, только добавив допуск сотрудникам в справочнике (tb_relation_resource_qualification) или явно разрешив назначать без него — «Правила» на боковой панели.',
+  },
+  TOO_LONG: {
+    title: 'Задача длиннее любой смены',
+    hint: 'Не помещается ни в одну смену даже с продлением на 4 ч — похоже на ошибку времени в данных.',
+  },
+  NO_CAPACITY: {
+    title: 'Допуск есть, но все заняты',
+    hint: 'Все, у кого есть допуск, в это время заняты или их нельзя вызвать по правилам отдыха и продления (не больше 4 ч). Нужен ещё один человек с этим допуском в графике.',
+  },
+};
+
 const TIER_INFO = {
   normal: { color: null, label: '' },
   tight: { color: 'orange', label: 'сжато' },
@@ -59,7 +74,21 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
   const range = visibleRange || [dateObj.getTime(), nextDay.getTime()];
 
   const rows = useMemo(() => actions.map(a => ({ action: a, tasks: actionTasks(a, finalTasks) })), [actions, finalTasks]);
-  const names = rows.map(r => r.action.name);
+  // One person can have two rows (their own shift extended and a call-in), so
+  // rows are told apart by more than the name.
+  const keyOf = useMemo(() => {
+    const m = new Map(), seen = new Map();
+    for (const { action: a } of rows) {
+      let k = a.type === 'callin' ? `${a.name} · вызов` : a.name;
+      const n = (seen.get(k) || 0) + 1;
+      seen.set(k, n);
+      if (n > 1) k = `${k} (${n})`;
+      m.set(a, k);
+    }
+    return m;
+  }, [rows]);
+  const rowKey = a => keyOf.get(a);
+  const names = rows.map(r => rowKey(r.action));
 
   const usedQuals = useMemo(() => {
     const set = new Set();
@@ -73,7 +102,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
     name: action.name,
     x: tasks.map(t => t.end - t.start),
     base: tasks.map(t => t.start.getTime()),
-    y: tasks.map(() => action.name),
+    y: tasks.map(() => rowKey(action)),
     marker: { color: tasks.map(t => qualColor(t.reqType || '?')), opacity: 0.9, line: { color: isDark ? '#000' : '#fff', width: 1 } },
     text: tasks.map(t => {
       const mins = Math.round((t.end - t.start) / 60000);
@@ -92,7 +121,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
       'Время: %{customdata.start} – %{customdata.end}' +
       '<extra></extra>',
     showlegend: false,
-  })), [rows, isDark]);
+  })), [rows, isDark, keyOf]);
 
   const ROW_PX = 32;
   const MARGIN_T = 4, MARGIN_B = 8;
@@ -133,7 +162,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
           <div style={{ width: ML, flexShrink: 0, background: labelBg, paddingTop: MARGIN_T, paddingBottom: MARGIN_B, boxSizing: 'border-box' }}>
             {rows.map(({ action }) => (
               <div
-                key={action.name}
+                key={rowKey(action)}
                 title={action.name}
                 style={{
                   height: ROW_PX, display: 'flex', alignItems: 'center', gap: 6,
@@ -219,7 +248,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
 export default function StaffingGapPanel({
   tasks, staffDB, targetDate, windowDates, windowStart, windowDays,
   fullRoster, allShiftsByPerson, distanceResolver, isDark,
-  resolution: providedResolution,
+  resolution: providedResolution, onApply,
 }) {
   const [granularity, setGranularity] = useState(60);
 
@@ -246,10 +275,11 @@ export default function StaffingGapPanel({
   const fontColor = isDark ? '#d4d4d4' : '#444';
 
   const unresolved = resolution?.unresolved ?? [];
-  const unresolvedByQual = {};
+  const unresolvedByReason = {};
   for (const t of unresolved) {
     const key = t.reqType || '(без квалификации)';
-    (unresolvedByQual[key] ??= []).push(t);
+    const reason = resolution?.unresolvedReasons?.[t.id] ?? 'NO_CAPACITY';
+    ((unresolvedByReason[reason] ??= {})[key] ??= []).push(t);
   }
 
   return (
@@ -336,23 +366,33 @@ export default function StaffingGapPanel({
             <Text type="secondary" style={{ fontSize: 12 }}>Подходящих кандидатов на вызов или продление смены не нашлось.</Text>
           )}
 
-          {Object.keys(unresolvedByQual).length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Text type="warning" style={{ fontSize: 12 }}>
-                Не удалось закрыть даже с учётом смягчённых правил вызова:
-              </Text>
-              <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                {Object.entries(unresolvedByQual).map(([qual, list]) => (
-                  <li key={qual} style={{ fontSize: 13 }}>{qual}: {list.length} задач(и)</li>
-                ))}
-              </ul>
+          {resolution.actions.length > 0 && onApply && (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <Button type="primary" onClick={() => onApply(resolution)}>
+                Применить план: {resolution.actions.filter(a => a.type === 'extend').length} сдвигов смен,{' '}
+                {resolution.actions.filter(a => a.type === 'callin').length} вызовов
+              </Button>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Это значит, что абсолютно ни у кого в загруженных данных — ни на смене, ни в полном
-                ростере, даже без требований к отдыху — нет этой квалификации без реального пересечения
-                по времени с чем-то ещё. Правило качества данных сюда не отменяется: если
-                tb_relation_resource_qualification загружена не полностью, кандидат может существовать
-                в реальности, просто его квалификация не попала в загруженный набор.
+                Сдвиги и вызовы станут сменами в расписании, задачи распределятся как в плане.
+                Это предложение — согласуйте его с сотрудниками и HR.
               </Text>
+            </div>
+          )}
+
+          {Object.keys(unresolvedByReason).length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Text type="warning" style={{ fontSize: 12, display: 'block' }}>
+                Остаются без исполнителя даже с этим планом — и почему:
+              </Text>
+              {Object.entries(UNRESOLVED_INFO).filter(([k]) => unresolvedByReason[k]).map(([k, info]) => (
+                <div key={k} style={{ marginTop: 6 }}>
+                  <Text strong style={{ fontSize: 13 }}>{info.title}:</Text>{' '}
+                  {Object.entries(unresolvedByReason[k]).map(([qual, list], i) => (
+                    <span key={qual} style={{ fontSize: 13 }}>{i > 0 && ', '}{qual} — {list.length}</span>
+                  ))}
+                  <div><Text type="secondary" style={{ fontSize: 12 }}>{info.hint}</Text></div>
+                </div>
+              ))}
             </div>
           )}
         </div>
