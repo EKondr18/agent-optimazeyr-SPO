@@ -72,17 +72,22 @@ function QualityBody({ q }) {
 
 function StatsBody({ s }) {
   const lb = s.lowerBound;
-  const reachable = lb?.bound != null ? Math.max(0, s.open.final - lb.bound) : null;
+  const reachable = lb?.bound != null ? Math.max(0, s.openDay - lb.bound) : null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
       <div>
-        <Text strong>Нераспределено:</Text>{' '}
-        после сборки {s.open.build} → после улучшения {s.open.improve} → после LNS {s.open.lns}
-        {s.open.final !== s.open.lns && <> → после проверки {s.open.final}</>}
+        <Text strong>За {s.selectedDate}:</Text> нераспределено <b>{s.openDay}</b> из {s.tasksDay} задач
+      </div>
+      <div>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          По всему окну (±1 день; на краях окна не хватает смен соседних дней, поэтому там больше):
+          после сборки {s.open.build} → после улучшения {s.open.improve} → после LNS {s.open.lns}
+          {s.open.final !== s.open.lns && <> → после проверки {s.open.final}</>}
+        </Text>
       </div>
       {lb?.bound != null ? (
         <div>
-          <Text strong>Нижняя граница:</Text> при любом распределении останется не меньше <b>{lb.bound}</b>{' '}
+          <Text strong>Нижняя граница за день:</Text> при любом распределении останется не меньше <b>{lb.bound}</b>{' '}
           {lb.noEligible > 0 && <>({lb.noEligible} — задачи, которые некому выполнить вообще: нет смены с нужным допуском) </>}
           — значит, улучшить можно не больше чем на <b>{reachable}</b>.
           {lb.peak && (
@@ -128,7 +133,7 @@ export default function PlanReport({ quality, stats, isDark }) {
     items.push({
       key: 'stats',
       label: <span>Результат оптимизации <Tag color={stats.violations.length ? 'red' : 'green'} style={{ marginLeft: 6 }}>
-        нераспределено {stats.open.final}{stats.lowerBound?.bound != null ? ` · минимум ${stats.lowerBound.bound}` : ''}
+        нераспределено за день {stats.openDay}{stats.lowerBound?.bound != null ? ` · минимум ${stats.lowerBound.bound}` : ''}
       </Tag></span>,
       children: <StatsBody s={stats} />,
     });

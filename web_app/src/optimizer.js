@@ -605,6 +605,44 @@ export function assignmentCost(tasks, staffDB, selectedDate, resolver, windowDat
   return total;
 }
 
+// The plan's measurable outcome in plain units, for comparing runs and
+// configurations: open/assigned tasks in the window, metres walked, minutes
+// of hand-off margin missing below the target, minutes of overtime, people
+// used, the busiest person's task count and the spread of work minutes.
+export function planMetrics(tasks, staffDB, selectedDate, resolver, windowDates) {
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
+  const shifts = new Map();
+  for (const s of mergeStaffWindow(staffDB, dates)) {
+    if (!shifts.has(s.name)) shifts.set(s.name, []);
+    shifts.get(s.name).push(s);
+  }
+  const by = new Map();
+  let open = 0, assigned = 0;
+  for (const t of tasks) {
+    if (!dates.includes(t.date)) continue;
+    if (t.employee === 'Не назначено') { open++; continue; }
+    assigned++;
+    if (!by.has(t.employee)) by.set(t.employee, []);
+    by.get(t.employee).push(t);
+  }
+  let walkM = 0, slackShortMin = 0, overtimeMin = 0, maxTasks = 0;
+  const workMin = [];
+  for (const [name, list] of by) {
+    list.sort((a, b) => a.start - b.start);
+    const r = routeStats(shifts.get(name), list, resolver);
+    walkM += r.walk; slackShortMin += r.slackShort; overtimeMin += r.overtime;
+    maxTasks = Math.max(maxTasks, list.length);
+    workMin.push(list.reduce((s, t) => s + (t.end - t.start) / 60000, 0));
+  }
+  const mean = workMin.length ? workMin.reduce((a, b) => a + b, 0) / workMin.length : 0;
+  const sd = workMin.length ? Math.sqrt(workMin.reduce((a, b) => a + (b - mean) ** 2, 0) / workMin.length) : 0;
+  return {
+    open, assigned, walkM: Math.round(walkM), slackShortMin: Math.round(slackShortMin),
+    overtimeMin: Math.round(overtimeMin), peopleUsed: by.size, maxTasks,
+    workMinMean: Math.round(mean), workMinSd: Math.round(sd),
+  };
+}
+
 // ── Independent plan check ──────────────────────────────────────────────────
 // Re-derives every hard rule from scratch for a finished plan, without any of
 // the search's incremental bookkeeping — so a slip in a delta, a stale cache
@@ -1530,7 +1568,7 @@ function mulberry32(seed) {
 export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
   const {
     timeBudgetMs = 2000, maxIterations = Infinity, seed = 1, frozenBefore, weights,
-    removeSizes = [4, 8, 16],
+    removeSizes = [4, 8, 16], destroyPeople = 3, focusDates,
   } = options;
   const W = resolveWeights(weights);
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
@@ -1586,9 +1624,11 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
   const destroyConflict = k => {
     const candidates = [...openSet].filter(id => eligibleOf(byId.get(id)).length > 0);
     if (candidates.length === 0) return null;
-    const target = byId.get(pick(candidates));
+    // Open tasks of the dates that matter most (the selected day) first.
+    const focused = focusDates ? candidates.filter(id => focusDates.includes(byId.get(id).date)) : [];
+    const target = byId.get(pick(focused.length > 0 && rnd() < 0.8 ? focused : candidates));
     const lo = target.start.getTime() - 3600000, hi = target.end.getTime() + 3600000;
-    const people = [...eligibleOf(target)].sort(() => rnd() - 0.5).slice(0, 3);
+    const people = [...eligibleOf(target)].sort(() => rnd() - 0.5).slice(0, destroyPeople);
     const removed = [];
     for (const n of people) {
       for (const t of lists[n] || []) {
@@ -1818,7 +1858,7 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates) 
 // timings, why each search stopped, any violations left (locked tasks only)
 // and the lower bound on open tasks.
 export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { weights, lnsBudgetMs = 3000, seed = 1 } = options;
+  const { weights, lnsBudgetMs = 3000, seed = 1, lnsOptions } = options;
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const openIn = ts => ts.filter(t => dates.includes(t.date) && t.employee === 'Не назначено').length;
   const ms = {};
@@ -1828,15 +1868,23 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
   const improved = improveAssignment(built, staffDB, selectedDate, resolver, dates, { weights });
   ms.improve = Date.now() - t0; t0 = Date.now();
   const lns = lnsBudgetMs > 0
-    ? lnsImprove(improved.tasks, staffDB, selectedDate, resolver, dates, { weights, timeBudgetMs: lnsBudgetMs, seed })
+    ? lnsImprove(improved.tasks, staffDB, selectedDate, resolver, dates, { weights, timeBudgetMs: lnsBudgetMs, seed, focusDates: [selectedDate], ...lnsOptions })
     : { tasks: improved.tasks, iterations: 0, accepted: 0, terminationReason: 'skipped' };
   ms.lns = Date.now() - t0; t0 = Date.now();
   const certified = certifyPlan(lns.tasks, staffDB, selectedDate, resolver, dates);
-  const bound = unassignedLowerBound(certified.tasks, staffDB, selectedDate, dates);
+  // The figures that matter are the selected day's: the neighbouring days are
+  // in the window as context, and their far edges lack the shifts of the days
+  // beyond, so their open counts are inflated by construction. The day's own
+  // bound counts only its tasks against everyone on shift in the window.
+  const dayTasks = certified.tasks.filter(t => t.date === selectedDate);
+  const bound = unassignedLowerBound(dayTasks, staffDB, selectedDate, dates);
   ms.check = Date.now() - t0;
+  const openDay = ts => ts.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
   return {
     tasks: certified.tasks,
     stats: {
+      openDay: openDay(certified.tasks),
+      tasksDay: certified.tasks.filter(t => t.date === selectedDate).length,
       open: { build: openIn(built), improve: openIn(improved.tasks), lns: openIn(lns.tasks), final: openIn(certified.tasks) },
       ms,
       improveTermination: improved.terminationReason,
