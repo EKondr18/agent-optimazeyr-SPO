@@ -305,3 +305,19 @@ test('waived qualification: assignable only when the policy says so, and counted
   assert.equal(open(out), 0);
   assert.equal(waivedAssignments(out, staff, WIN).length, 1);
 });
+
+test('call-in plan builds on the current schedule instead of re-solving it', () => {
+  const s1 = person('S1', ['Q1'], 6, 14), s2 = person('S2', ['Q1'], 6, 14);
+  // a deliberately "unbalanced" current schedule a fresh run would reshuffle
+  const current = [
+    mk('a', 7, 0, 7, 30, 'Q1', 'S1'), mk('b', 8, 0, 8, 30, 'Q1', 'S1'), mk('c', 9, 0, 9, 30, 'Q1', 'S1'),
+    mk('late', 14, 10, 14, 40, 'Q1'),
+  ];
+  const r = resolveStaffingWithCallIns({
+    tasksDB: current, staffDB: db(s1, s2), targetDate: DATE, windowDates: WIN,
+    fullRoster: [], allShiftsByPerson: new Map(), distanceResolver: null,
+  });
+  for (const id of ['a', 'b', 'c']) assert.equal(empOf(r.tasks, id), 'S1');
+  assert.equal(r.reassignments.length, 0);
+  assert.equal(r.unresolved.length, 0); // closed by extending one of them
+});

@@ -366,6 +366,23 @@ export default function StaffingGapPanel({
             <Text type="secondary" style={{ fontSize: 12 }}>Подходящих кандидатов на вызов или продление смены не нашлось.</Text>
           )}
 
+          {resolution.reassignments?.length > 0 && (
+            <details style={{ marginTop: 10, fontSize: 13 }}>
+              <summary style={{ cursor: 'pointer' }}>
+                Перестановки в текущем расписании: <b>{resolution.reassignments.length}</b> задач переходят к другим
+                сотрудникам, чтобы освободить место (поэтому у человека в плане может появиться задача в то время,
+                когда сейчас у него стоит другая — она уходит коллеге)
+              </summary>
+              <ul style={{ margin: '6px 0', paddingLeft: 20, maxHeight: 220, overflowY: 'auto' }}>
+                {resolution.reassignments.map(r => (
+                  <li key={r.id}>
+                    {fmtDT(r.start)}–{fmtT(r.end)} {r.reqType} ({r.name}): {r.from} → <b>{r.to}</b>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           {resolution.actions.length > 0 && onApply && (
             <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <Button type="primary" onClick={() => onApply(resolution)}>

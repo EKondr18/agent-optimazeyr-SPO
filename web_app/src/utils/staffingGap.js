@@ -6,7 +6,13 @@
 // in or extend, arrived at by actually re-running the optimizer with them
 // added — so the dispatcher sees a proposal that accounts for reshuffling
 // the whole day, not just a literal one-task-at-a-time patch.
-import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound } from '../optimizer.js';
+import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound, certifyPlan } from '../optimizer.js';
+
+// Price of moving an already-assigned task while working in the open ones.
+// On real 01.09 (window 31.08-02.09): at 300 the plan reassigned 206 of the
+// schedule's tasks, at 3000 only 65 — and closed slightly more (38 left open
+// vs 41): what remains are the moves a task genuinely needs to fit in.
+const MOVE_PRICE = 3000;
 import { packIntoChannels, bucketizeChannels } from './staffDemand.js';
 
 // Merges adjacent same-count buckets into a single interval, so the result
@@ -232,8 +238,24 @@ export function resolveStaffingWithCallIns({
   const dates = windowDates && windowDates.length > 0 ? windowDates : [targetDate];
   const workingStaff = (staffDB[targetDate] || []).map(s => ({ ...s }));
   let currentStaffDB = { ...staffDB, [targetDate]: workingStaff };
-  let currentTasks = runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
-  const baselineTasks = currentTasks; // the plain run, before any call-in/extension
+  // The plan builds on the schedule the dispatcher is looking at: whatever is
+  // already assigned stays, and only the open tasks are worked in through
+  // extensions and call-ins. (Re-solving the whole window from scratch, as
+  // this once did, reassigned well over a thousand tasks against what the
+  // main chart shows — a proposed extension then looked like a clash with the
+  // person's current task, and applying the plan reshuffled the whole day.)
+  // Only a window with nothing assigned yet — say, tomorrow before anyone ran
+  // the optimizer on it — gets a fresh run first. Anything in the current
+  // schedule the rules reject is reopened rather than built on.
+  const anyAssigned = tasksDB.some(t => dates.includes(t.date) && t.employee !== 'Не назначено');
+  let currentTasks = anyAssigned
+    ? certifyPlan(tasksDB, currentStaffDB, targetDate, distanceResolver, dates).tasks
+    : runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
+  const baselineTasks = currentTasks; // before any call-in/extension
+  // Moving a task the schedule already gives to someone has a price, as in a
+  // batch update: displacements happen only where they place an open task.
+  const startEmp = new Map(currentTasks.map(t => [t.id, t.employee]));
+  const moveCost = t => (startEmp.get(t.id) && startEmp.get(t.id) !== 'Не назначено' ? MOVE_PRICE : 0);
 
   // People already called in by this plan (each at most once).
   const usedNames = new Set();
@@ -304,6 +326,7 @@ export function resolveStaffingWithCallIns({
     currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
       scopeEmployees: [],
       scopeTaskIds: stillOpen,
+      moveCost,
     }).tasks;
   }
 
@@ -312,6 +335,7 @@ export function resolveStaffingWithCallIns({
   if (skipIds.size > 0) {
     currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
       scopeEmployees: [],
+      moveCost,
     }).tasks;
   }
 
@@ -342,7 +366,16 @@ export function resolveStaffingWithCallIns({
     return 'NO_CAPACITY';
   };
   const unresolvedReasons = Object.fromEntries(unresolved.map(t => [t.id, reasonOf(t)]));
-  return { actions, tasks: currentTasks, unresolved, unresolvedReasons, baselineTasks, minExtra, noEligible };
+  // Tasks the plan hands from one person to another to make room — shown
+  // with the plan, so a proposal never looks like a clash with the schedule.
+  const reassignments = currentTasks
+    .filter(t => {
+      const was = startEmp.get(t.id);
+      return was && was !== 'Не назначено' && t.employee !== 'Не назначено' && t.employee !== was;
+    })
+    .map(t => ({ id: t.id, name: t.name, reqType: t.reqType, start: t.start, end: t.end, from: startEmp.get(t.id), to: t.employee }))
+    .sort((a, b) => a.start - b.start);
+  return { actions, tasks: currentTasks, unresolved, unresolvedReasons, reassignments, baselineTasks, minExtra, noEligible };
 }
 
 // Shrinks every proposal to what it is actually used for once the plan is
