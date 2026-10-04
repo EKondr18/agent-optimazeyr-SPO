@@ -213,3 +213,44 @@ test('data quality report flags what makes tasks unassignable', () => {
   assert.deepEqual(rep.datesWithoutShifts, ['2026-01-02']);
   assert.deepEqual(rep.staffWithoutQuals, ['S0']);
 });
+
+test('batch update: a single delay does not reshuffle unrelated assignments', () => {
+  for (let seed = 1; seed <= 15; seed++) {
+    const { tasks, staff } = randomInstance(seed);
+    const base = improveAssignment(runOptimizer(tasks, staff, DATE, null, WIN), staff, DATE, null, WIN).tasks;
+    const target = base.find(t => t.employee !== OPEN && t.start >= D(11));
+    if (!target) continue;
+    const out = applyChanges(base, staff, DATE, null, WIN, [
+      { id: target.id, start: new Date(target.start.getTime() + 20 * 60000), end: new Date(target.end.getTime() + 20 * 60000) },
+    ], { now: D(9) });
+    const moved = out.tasks.filter(t => t.id !== target.id && empOf(base, t.id) !== t.employee && empOf(base, t.id) !== OPEN);
+    assert.ok(moved.length <= 3, `seed ${seed}: ${moved.length} unrelated tasks moved`);
+    assert.deepEqual(validatePlan(out.tasks, staff, DATE, null, WIN), []);
+    // with no price on moves the same update may reshuffle freely — the price is what keeps it calm
+    const free = applyChanges(base, staff, DATE, null, WIN, [
+      { id: target.id, start: new Date(target.start.getTime() + 20 * 60000), end: new Date(target.end.getTime() + 20 * 60000) },
+    ], { now: D(9), stability: 0 });
+    assert.deepEqual(validatePlan(free.tasks, staff, DATE, null, WIN), []);
+  }
+});
+
+test('batch update: corrections inside the frozen hour are applied and repaired, nothing else there moves', () => {
+  for (let seed = 30; seed <= 40; seed++) {
+    const { tasks, staff } = randomInstance(seed);
+    const base = improveAssignment(runOptimizer(tasks, staff, DATE, null, WIN), staff, DATE, null, WIN).tasks;
+    const now = D(10);
+    const near = base.filter(t => t.employee !== OPEN && t.start >= now && t.start < D(11));
+    if (near.length < 2) continue;
+    const changes = near.slice(0, 2).map(t => ({ id: t.id, start: new Date(t.start.getTime() + 15 * 60000), end: new Date(t.end.getTime() + 15 * 60000) }));
+    const out = applyChanges(base, staff, DATE, null, WIN, changes, { now });
+    assert.deepEqual(validatePlan(out.tasks, staff, DATE, null, WIN), []);
+    for (const c of changes) assert.equal(out.tasks.find(t => t.id === c.id).start.getTime(), c.start.getTime());
+    // inside the frozen hour, only tasks that the corrections actually broke may move
+    const repaired = new Set(out.repairs.map(r => r.taskId));
+    for (const t of base) {
+      if (t.start < now || t.start >= D(11) || changes.some(c => c.id === t.id) || repaired.has(t.id)) continue;
+      const after = out.tasks.find(x => x.id === t.id);
+      if (after) assert.equal(after.employee, t.employee, `seed ${seed}: frozen ${t.id} moved`);
+    }
+  }
+});
