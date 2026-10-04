@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space } from 'antd';
 import Plot from 'react-plotly.js';
-import { hasAllQuals } from '../optimizer';
+import { hasAllQuals, fitsShift } from '../optimizer';
 import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
 
 const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
@@ -276,10 +276,9 @@ export default function BacklogPanel({
       key: 'assign',
       width: 240,
       render: (_, task) => {
+        // The final say (walk from the shift base, conflicts) is attemptAssign's.
         const eligible = staffList.filter(s =>
-          hasAllQuals(s.quals, task) &&
-          s.shiftStart <= task.start &&
-          task.end <= s.shiftEnd
+          hasAllQuals(s.quals, task) && fitsShift(s, task, null, true)
         );
         const sel = selections[task.id] || null;
         return (

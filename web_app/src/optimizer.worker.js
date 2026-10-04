@@ -2,9 +2,11 @@
 // responsive (spinner, scrolling) while a few-second job is computed. Plain
 // message protocol: { id, kind, payload } in, { id, result } or { id, error }
 // out. The distance resolver is rebuilt here from the raw rows (functions
-// can't cross the thread boundary) and kept until the rows' key changes.
+// can't cross the thread boundary) and kept until the rows' key changes. The
+// operating policy travels with every job — this thread has its own copy of
+// the optimizer module, so the page's setPolicy doesn't reach it.
 import { createDistanceResolver } from './utils/travelGraph.js';
-import { runOptimizer, improveAssignment, applyChanges } from './optimizer.js';
+import { applyChanges, planWindow, setPolicy } from './optimizer.js';
 import { resolveStaffingWithCallIns } from './utils/staffingGap.js';
 
 let resolverKey = null;
@@ -21,11 +23,11 @@ function resolverFor(p) {
 self.onmessage = e => {
   const { id, kind, payload: p } = e.data;
   try {
+    setPolicy(p.policy);
     const r = resolverFor(p);
     let result;
     if (kind === 'run') {
-      const built = runOptimizer(p.tasks, p.staffDB, p.selectedDate, r, p.windowDates, undefined, { weights: p.weights });
-      result = improveAssignment(built, p.staffDB, p.selectedDate, r, p.windowDates, { weights: p.weights }).tasks;
+      result = planWindow(p.tasks, p.staffDB, p.selectedDate, r, p.windowDates, { weights: p.weights, lnsBudgetMs: p.lnsBudgetMs });
     } else if (kind === 'changes') {
       result = applyChanges(p.tasks, p.staffDB, p.selectedDate, r, p.windowDates, p.changes, p.options);
     } else if (kind === 'gap') {

@@ -77,20 +77,49 @@ const TIER_ORDER = ['normal', 'tight', 'forced'];
 // (hasAllQuals) and no actual time overlap with that person's own other
 // commitments (no double-booking). "forced" picks are exactly the ones a
 // dispatcher should sanity-check before accepting.
+//
+// Extensions never go past 4 h: that is the daily overtime ceiling of the
+// Labour Code (ст. 99 ТК РФ, as amended from 1 Sept 2026) — a shortage is a
+// reason to propose something for approval, not to plan beyond the law. The
+// rest rule between shifts of the "forced" tier is exactly what HR must
+// confirm before such a proposal is accepted.
+const LEGAL_MAX_EXTENSION_MS = 4 * 3600000;
 const RELAX_TIERS = [
   { tier: 'normal', extendMs: 2 * 3600000, bufferMs: 12 * 3600000 },
-  { tier: 'tight', extendMs: 4 * 3600000, bufferMs: 4 * 3600000 },
-  { tier: 'forced', extendMs: 8 * 3600000, bufferMs: 0 },
+  { tier: 'tight', extendMs: LEGAL_MAX_EXTENSION_MS, bufferMs: 4 * 3600000 },
+  { tier: 'forced', extendMs: LEGAL_MAX_EXTENSION_MS, bufferMs: 0 },
 ];
 
-function isEligibleForCallIn(person, gapStart, gapEnd, allShiftsByPerson, bufferMs) {
+// The duty window a call-in for `target` would actually create: it starts
+// with the task and runs CALLIN_WINDOW_MS, cut short so it keeps `bufferMs`
+// of rest before the person's next own shift. It is the WHOLE window that has
+// to clear their other shifts, not just the task: a 6 h call-in for an 08:00
+// task overlaps a 13:00 shift even though the task itself does not.
+// null = no window that still covers the task.
+function callInWindow(person, target, allShiftsByPerson, bufferMs) {
   const shifts = allShiftsByPerson?.get(person.name) || [];
-  const bufferedStart = new Date(gapStart.getTime() - bufferMs);
-  const bufferedEnd = new Date(gapEnd.getTime() + bufferMs);
-  // bufferMs can be 0 (the "forced" tier) — even then, an actual time
-  // overlap with another shift of theirs still disqualifies them; only the
-  // rest-buffer around it is what gets relaxed away tier by tier.
-  return shifts.every(s => !(s.shiftStart < bufferedEnd && s.shiftEnd > bufferedStart));
+  const start = target.start.getTime();
+  let end = start + CALLIN_WINDOW_MS;
+  for (const s of shifts) {
+    const ss = s.shiftStart.getTime(), se = s.shiftEnd.getTime();
+    // bufferMs can be 0 (the "forced" tier) — even then, an actual time
+    // overlap with another shift of theirs still disqualifies them; only the
+    // rest-buffer around it is what gets relaxed away tier by tier.
+    if (ss < target.end.getTime() + bufferMs && se > start - bufferMs) return null;
+    if (ss >= target.end.getTime()) end = Math.min(end, ss - bufferMs);
+  }
+  if (end < target.end.getTime()) return null;
+  return { shiftStart: new Date(start), shiftEnd: new Date(end) };
+}
+
+// An extension may not run into the same person's other shifts either.
+function extensionClear(staff, newStart, newEnd, allShiftsByPerson, bufferMs) {
+  const shifts = allShiftsByPerson?.get(staff.name) || [];
+  return shifts.every(s => {
+    if (s.shiftStart.getTime() === staff.shiftStart.getTime() && s.shiftEnd.getTime() === staff.shiftEnd.getTime()) return true;
+    if (s.shiftStart < staff.shiftEnd && s.shiftEnd > staff.shiftStart) return true; // the shift being extended
+    return !(s.shiftStart.getTime() < newEnd.getTime() + bufferMs && s.shiftEnd.getTime() > newStart.getTime() - bufferMs);
+  });
 }
 
 // Finds the best available way to cover `target`, trying RELAX_TIERS in
@@ -101,21 +130,25 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
   for (const { tier, extendMs, bufferMs } of RELAX_TIERS) {
     for (const s of workingStaff) {
       if (!hasAllQuals(s.quals, target)) continue;
+      // Measured against the shift as originally planned, so repeated
+      // extensions of one person never add up past the cap.
+      const baseStart = s.originalStart ?? s.shiftStart, baseEnd = s.originalEnd ?? s.shiftEnd;
       const gapAfterShift = target.start - s.shiftEnd;
       const gapBeforeShift = s.shiftStart - target.end;
-      if (gapAfterShift >= 0 && gapAfterShift <= extendMs) {
+      if (gapAfterShift >= 0 && target.end - baseEnd <= extendMs &&
+          extensionClear(s, s.shiftStart, target.end, allShiftsByPerson, bufferMs)) {
         return { type: 'extend', tier, staff: s, direction: 'end', newBound: target.end };
       }
-      if (gapBeforeShift >= 0 && gapBeforeShift <= extendMs) {
+      if (gapBeforeShift >= 0 && baseStart - target.start <= extendMs &&
+          extensionClear(s, target.start, s.shiftEnd, allShiftsByPerson, bufferMs)) {
         return { type: 'extend', tier, staff: s, direction: 'start', newBound: target.start };
       }
     }
-    const candidate = fullRoster.find(p =>
-      !usedNames.has(p.name) &&
-      hasAllQuals(p.quals, target) &&
-      isEligibleForCallIn(p, target.start, target.end, allShiftsByPerson, bufferMs)
-    );
-    if (candidate) return { type: 'callin', tier, candidate };
+    for (const p of fullRoster) {
+      if (usedNames.has(p.name) || !hasAllQuals(p.quals, target)) continue;
+      const window = callInWindow(p, target, allShiftsByPerson, bufferMs);
+      if (window) return { type: 'callin', tier, candidate: p, window };
+    }
   }
   return null;
 }
@@ -165,6 +198,8 @@ export function resolveStaffingWithCallIns({
     if (picked.type === 'extend') {
       const s = picked.staff;
       const preStart = s.shiftStart, preEnd = s.shiftEnd;
+      s.originalStart ??= preStart;
+      s.originalEnd ??= preEnd;
       if (picked.direction === 'end') s.shiftEnd = new Date(Math.max(s.shiftEnd.getTime(), picked.newBound.getTime()));
       else s.shiftStart = new Date(Math.min(s.shiftStart.getTime(), picked.newBound.getTime()));
 
@@ -188,9 +223,8 @@ export function resolveStaffingWithCallIns({
         });
       }
     } else {
-      const { candidate } = picked;
-      const shiftStart = target.start;
-      const shiftEnd = new Date(target.start.getTime() + CALLIN_WINDOW_MS);
+      const { candidate, window } = picked;
+      const { shiftStart, shiftEnd } = window;
       const newStaff = { name: candidate.name, quals: candidate.quals, shiftStart, shiftEnd, basePos: null };
       workingStaff.push(newStaff);
       usedNames.add(candidate.name);

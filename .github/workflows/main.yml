@@ -182,6 +182,10 @@ jobs:
         working-directory: web_app
         run: npm install
 
+      - name: "Run optimizer tests"
+        working-directory: web_app
+        run: npm test
+
       - name: "Build production bundle"
         working-directory: web_app
         run: npm run build

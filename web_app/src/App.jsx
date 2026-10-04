@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ConfigProvider, Layout, Button, Select, Switch, Input,
   Checkbox, Space, Drawer, Collapse, Typography, Alert,
-  Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal, Slider,
+  Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal, Slider, InputNumber,
 } from 'antd';
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
@@ -15,7 +15,12 @@ import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
-import { runOptimizer, improveAssignment, applyChanges, DEFAULT_WEIGHTS, findConflicts, hasAllQuals } from './optimizer';
+import {
+  applyChanges, planWindow, DEFAULT_WEIGHTS, DEFAULT_POLICY, setPolicy, findConflicts, hasAllQuals,
+  fitsShift, requiredQuals,
+} from './optimizer';
+import { dataQualityReport } from './utils/dataQuality';
+import PlanReport from './components/PlanReport';
 import MetricsSummary from './components/MetricsSummary';
 import GanttChart from './components/GanttChart';
 import BacklogPanel from './components/BacklogPanel';
@@ -226,6 +231,7 @@ function SidebarContent({
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, selectedDate, setSelectedDate,
   handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
+  policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec,
   filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   onClose,
 }) {
@@ -425,6 +431,41 @@ function SidebarContent({
                 </div>
               ))}
             </div>
+
+            {/* Operating rules: hard limits, not preferences */}
+            <div style={{ marginTop: 12 }}>
+              <Text style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>Правила (жёсткие ограничения)</Text>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+                <Text style={{ fontSize: 12 }} title="До скольких минут после конца смены сотрудник может задержаться, чтобы закончить начатую в смену задачу">
+                  Допустимая переработка, мин
+                </Text>
+                <InputNumber
+                  size="small" min={0} max={240} step={15} style={{ width: 72 }}
+                  value={policy.maxOvertimeMin}
+                  onChange={v => setPolicyState(p => ({ ...p, maxOvertimeMin: v ?? 0 }))}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+                <Text style={{ fontSize: 12 }} title="Разрешить одному сотруднику две пересекающиеся по времени задачи одного рейса на одной стоянке с разными названиями (например, OUT_1 и OUT_2)">
+                  Параллельные задачи одного рейса
+                </Text>
+                <Switch
+                  size="small"
+                  checked={policy.sameFlightOverlap}
+                  onChange={v => setPolicyState(p => ({ ...p, sameFlightOverlap: v }))}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+                <Text style={{ fontSize: 12 }} title="Сколько секунд дополнительно искать перестановки групп задач (LNS) после основного прохода. 0 — не искать">
+                  Доп. поиск (LNS), сек
+                </Text>
+                <InputNumber
+                  size="small" min={0} max={30} step={1} style={{ width: 72 }}
+                  value={lnsBudgetSec}
+                  onChange={v => setLnsBudgetSec(v ?? 0)}
+                />
+              </div>
+            </div>
           </div>
 
           <Divider style={{ margin: '8px 0' }} />
@@ -504,6 +545,18 @@ export default function App() {
     () => Object.fromEntries(Object.entries(DEFAULT_WEIGHTS).map(([k, v]) => [k, v * optPriorities[k]])),
     [optPriorities]
   );
+  // Operating rules (see DEFAULT_POLICY in optimizer.js). Applied on this
+  // thread for the manual-assignment checks and sent with every worker job.
+  const [policy, setPolicyState] = useState(DEFAULT_POLICY);
+  setPolicy(policy);
+  const [lnsBudgetSec, setLnsBudgetSec] = useState(3);
+  // What the last optimizer run reported (open tasks per stage, lower bound,
+  // checks) — shown under the metrics.
+  const [planStats, setPlanStats] = useState(null);
+  // Always the latest tasksDB, for telling whether a job's result is stale: a
+  // job computed from an older plan must not overwrite edits made meanwhile.
+  const tasksRef = useRef(tasksDB);
+  tasksRef.current = tasksDB;
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
@@ -530,6 +583,13 @@ export default function App() {
   const availableDates = useMemo(
     () => [...new Set(tasksDB.map(t => t.date))].sort(),
     [tasksDB]
+  );
+  // What in the loaded data makes tasks unassignable regardless of the
+  // optimizer. Depends only on the data's shape, not on assignments.
+  const dataQuality = useMemo(
+    () => (tasksDB.length ? dataQualityReport({ tasks: tasksDB, staffDB, fullRoster }) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tasksDB.length, staffDB, fullRoster]
   );
   const currentTasks = useMemo(
     () => tasksDB.filter(t => t.date === selectedDate),
@@ -654,6 +714,7 @@ export default function App() {
     setStaffDB(db);
     setColorMap(cm);
     setFullRoster(roster || []);
+    setPlanStats(null);
     // Open on the first day that has both tasks and shifts — the first task
     // date alone may have nobody on shift, which leaves the optimizer idle.
     setSelectedDate(dates.find(d => (db[d] || []).length > 0) ?? dates[0]);
@@ -802,7 +863,7 @@ export default function App() {
     const resolverRows = distanceResolver
       ? { locations: locationsFile?.rows || [], travelEdges: travelGraphFile?.rows || [] }
       : null;
-    const full = { ...payload, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
+    const full = { ...payload, policy, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
     try {
       if (!workerRef.current) {
         workerRef.current = new Worker(new URL('./optimizer.worker.js', import.meta.url), { type: 'module' });
@@ -812,11 +873,17 @@ export default function App() {
     }
     const w = workerRef.current;
     if (!w) {
-      if (kind === 'run') {
-        const built = runOptimizer(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, undefined, { weights: payload.weights });
-        return Promise.resolve(improveAssignment(built, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights }).tasks);
+      try {
+        if (kind === 'run') {
+          return Promise.resolve(planWindow(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights, lnsBudgetMs: payload.lnsBudgetMs }));
+        }
+        if (kind === 'gap') {
+          return Promise.resolve(resolveStaffingWithCallIns({ ...payload.args, distanceResolver }));
+        }
+        return Promise.resolve(applyChanges(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, payload.changes, payload.options));
+      } catch (err) {
+        return Promise.reject(err);
       }
-      return Promise.resolve(applyChanges(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, payload.changes, payload.options));
     }
     const id = ++jobSeq.current;
     return new Promise((resolve, reject) => {
@@ -850,14 +917,20 @@ export default function App() {
       return;
     }
     setBusy(true);
+    const startedFrom = tasksDB;
     try {
-      // The construction passes commit each task once and never look back —
-      // the job follows them with a local search that goes over the result and
-      // keeps applying relocations/swaps while any of them improves it.
-      const improved = await runJob('run', {
+      // Construction → local search → bounded LNS → independent check (see
+      // planWindow in optimizer.js).
+      const { tasks: improved, stats } = await runJob('run', {
         tasks: tasksDB, staffDB, selectedDate, windowDates, weights: optWeights,
+        lnsBudgetMs: Math.round(lnsBudgetSec * 1000),
       });
+      if (tasksRef.current !== startedFrom) {
+        message.warning('Пока шёл расчёт, расписание изменили вручную — результат оптимизатора не применён, чтобы не затереть правки. Запустите ещё раз.');
+        return;
+      }
       setTasksDB(improved);
+      setPlanStats({ ...stats, selectedDate });
       const inWin = improved.filter(t => windowDates.includes(t.date));
       const placed = inWin.filter(t => t.employee !== 'Не назначено').length;
       if (placed === 0 && inWin.length > 0) {
@@ -915,6 +988,7 @@ export default function App() {
     // inside the window only what's actually broken gets touched.
     const now = new Date(earliest);
     setBusy(true);
+    const startedFrom = tasksDB;
     let outcome;
     try {
       outcome = await runJob('changes', {
@@ -933,7 +1007,15 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-    const { tasks: resolved, repairs } = outcome;
+    if (tasksRef.current !== startedFrom) {
+      message.warning('Пока применялись задержки, расписание изменили вручную — результат не применён, чтобы не затереть правки. Примените задержки ещё раз.');
+      return;
+    }
+    const { tasks: resolved, repairs, needsDecision = [] } = outcome;
+    for (const id of needsDecision) {
+      const t = resolved.find(x => x.id === id);
+      if (t) message.warning(`«${t.name}» закреплена за ${t.employee}, но он(а) больше не может её выполнить (нет смены или допуска) — нужно решение диспетчера`);
+    }
 
     for (const c of repairs) {
       if (c.backlog) {
@@ -967,7 +1049,26 @@ export default function App() {
   // assignment path (backlog select+button, Gantt drag-and-drop) — one copy
   // of the conflict check instead of each path keeping its own, which has
   // already caused a real double-booking bug once when they drifted apart.
+  //
+  // A manual assignment passes the same hard rules as the optimizer's own
+  // (qualifications, shift incl. the allowed overtime, walk from the shift
+  // base, no double-booking) — a qualification or shift problem can't be
+  // overridden here, only a conflict can be resolved by picking someone else.
+  const canTakeManually = (s, task) =>
+    hasAllQuals(s.quals, task) && fitsShift(s, task, distanceResolver, true);
   function attemptAssign(task, employeeName, staffPool) {
+    const shifts = staffPool.filter(s => s.name === employeeName);
+    if (!shifts.some(s => canTakeManually(s, task))) {
+      const missing = requiredQuals(task).filter(q => !shifts.some(s => s.quals.includes(q)));
+      message.error(
+        shifts.length === 0
+          ? `${employeeName}: нет смены в этом окне`
+          : missing.length > 0
+            ? `${employeeName}: нет допуска ${missing.join(', ')} — назначить нельзя`
+            : `${employeeName}: задача вне смены (с учётом допустимой переработки ${policy.maxOvertimeMin} мин) или до неё не успеть дойти от места начала смены`
+      );
+      return;
+    }
     const conflicts = findConflicts(employeeName, task, tasksDB, distanceResolver);
     if (conflicts.length === 0) {
       handleAssign(task.id, employeeName, true);
@@ -975,9 +1076,7 @@ export default function App() {
     }
     const alternatives = staffPool.filter(s =>
       s.name !== employeeName &&
-      hasAllQuals(s.quals, task) &&
-      s.shiftStart <= task.start &&
-      task.end <= s.shiftEnd &&
+      canTakeManually(s, task) &&
       findConflicts(s.name, task, tasksDB, distanceResolver).length === 0
     );
     setConflictInfo({ task, sel: employeeName, conflicts, alternatives });
@@ -992,11 +1091,29 @@ export default function App() {
     attemptAssign(task, employeeName, ganttStaff);
   }
 
-  // Inline time edit from clicking a bar on the main Gantt chart.
-  function handleEditTaskTime(taskId, newStart, newEnd) {
-    setTasksDB(prev =>
-      prev.map(t => t.id === taskId ? { ...t, start: newStart, end: newEnd } : t)
-    );
+  // Inline time edit from clicking a bar on the main Gantt chart. Goes through
+  // the same batch-update path as any other change, so a new time that breaks
+  // the assignment (out of shift, now overlapping) is repaired, not kept.
+  async function handleEditTaskTime(taskId, newStart, newEnd) {
+    if (busy) return;
+    setBusy(true);
+    const startedFrom = tasksDB;
+    try {
+      const out = await runJob('changes', {
+        tasks: tasksDB, staffDB, selectedDate, windowDates,
+        changes: [{ id: taskId, start: newStart, end: newEnd }],
+        options: { weights: optWeights, escalate: false },
+      });
+      if (tasksRef.current !== startedFrom) return;
+      setTasksDB(out.tasks);
+      if (out.unplaced.includes(taskId)) {
+        message.warning('С новым временем задачу некому выполнить — она возвращена в бэклог');
+      }
+    } catch (err) {
+      message.error('Не удалось изменить время: ' + err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function toggleType(name) {
@@ -1014,6 +1131,7 @@ export default function App() {
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, selectedDate, setSelectedDate,
     handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
+    policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec,
     filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
   };
 
@@ -1364,6 +1482,11 @@ export default function App() {
                   staffList={currentStaff}
                   selectedDate={selectedDate}
                   distanceResolver={distanceResolver}
+                />
+                <PlanReport
+                  isDark={isDark}
+                  quality={dataQuality}
+                  stats={planStats && planStats.selectedDate === selectedDate ? planStats : null}
                 />
                 <Collapse
                   items={collapseItems}
