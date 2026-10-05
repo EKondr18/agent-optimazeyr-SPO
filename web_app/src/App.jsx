@@ -549,6 +549,7 @@ export default function App() {
   // A heavy optimizer job is running in the worker.
   const [busy, setBusy] = useState(false);
   const workerRef = useRef(null);
+  const workerWarned = useRef(false);
   const jobSeq = useRef(0);
   // How much each aim matters to the optimizer, as a multiplier on the
   // defaults (1 = default, 0 = ignore it). See DEFAULT_WEIGHTS in optimizer.js.
@@ -879,9 +880,29 @@ export default function App() {
     setTravelGraphFile(error ? { filename, rows: null, error } : { filename, rows, error: null });
   }
 
+  // Runs a job on the page itself — the fallback where the worker is
+  // unavailable or died (it freezes the UI for the duration, but still works).
+  function runJobHere(kind, payload) {
+    try {
+      if (kind === 'run') {
+        return Promise.resolve(planWindow(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights, lnsBudgetMs: payload.lnsBudgetMs }));
+      }
+      if (kind === 'gap') {
+        return Promise.resolve(resolveStaffingWithCallIns({ ...payload.args, distanceResolver }));
+      }
+      return Promise.resolve(applyChanges(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, payload.changes, payload.options));
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
   // Runs a heavy optimizer job in the worker and resolves with its result.
-  // Falls back to computing on the page itself where workers aren't available
-  // (it then freezes the UI for the duration, but still works).
+  // If the worker can't start or dies, the job is retried on the page itself
+  // and the user is told once. The usual cause is a page left open across a
+  // redeploy: the worker file is requested lazily, the old build's copy is
+  // gone, and the host answers with index.html instead — the worker then
+  // fails with an empty "worker error". The page's own bundle still holds the
+  // optimizer, so nothing is lost; reloading the page brings the new build.
   function runJob(kind, payload) {
     const resolverRows = distanceResolver
       ? { locations: locationsFile?.rows || [], travelEdges: travelGraphFile?.rows || [] }
@@ -895,19 +916,7 @@ export default function App() {
       workerRef.current = null;
     }
     const w = workerRef.current;
-    if (!w) {
-      try {
-        if (kind === 'run') {
-          return Promise.resolve(planWindow(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights, lnsBudgetMs: payload.lnsBudgetMs }));
-        }
-        if (kind === 'gap') {
-          return Promise.resolve(resolveStaffingWithCallIns({ ...payload.args, distanceResolver }));
-        }
-        return Promise.resolve(applyChanges(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, payload.changes, payload.options));
-      } catch (err) {
-        return Promise.reject(err);
-      }
-    }
+    if (!w) return runJobHere(kind, payload);
     const id = ++jobSeq.current;
     return new Promise((resolve, reject) => {
       const onMessage = e => {
@@ -919,8 +928,15 @@ export default function App() {
       const onError = e => {
         w.removeEventListener('message', onMessage);
         w.removeEventListener('error', onError);
-        workerRef.current = null;
-        reject(new Error(e.message || 'worker error'));
+        if (workerRef.current === w) workerRef.current = null;
+        try { w.terminate(); } catch { /* already gone */ }
+        // A real calculation error comes back as a message from the worker's
+        // own try/catch; an 'error' event is the worker itself failing.
+        if (!workerWarned.current) {
+          workerWarned.current = true;
+          message.warning('Фоновый расчёт недоступен (страница, скорее всего, устарела после обновления сайта). Расчёт выполнен на странице — обновите её (Ctrl+F5), чтобы вернуть быструю работу.', 8);
+        }
+        runJobHere(kind, payload).then(resolve, reject);
       };
       w.addEventListener('message', onMessage);
       w.addEventListener('error', onError);
