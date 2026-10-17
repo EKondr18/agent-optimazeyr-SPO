@@ -262,6 +262,11 @@ export function resolveStaffingWithCallIns({
   const skipIds = new Set();
   const actions = [];
   const actionOf = new Map(); // working shift object -> its action
+  // Tasks whose displacement-chain search came up empty, with the state they
+  // were searched in. improveAssignment is called once per added person (90
+  // times on a real day) and used to forget this every time, repeating the
+  // same hopeless searches — 99.6 % of this function's time.
+  const chainMemory = {};
 
   for (let iter = 0; iter < MAX_ITERATIONS && actions.length < MAX_ACTIONS; iter++) {
     const backlog = currentTasks
@@ -327,6 +332,7 @@ export function resolveStaffingWithCallIns({
       scopeEmployees: [],
       scopeTaskIds: stillOpen,
       moveCost,
+      chainMemory,
     }).tasks;
   }
 
@@ -336,6 +342,7 @@ export function resolveStaffingWithCallIns({
     currentTasks = improveAssignment(currentTasks, currentStaffDB, targetDate, distanceResolver, dates, {
       scopeEmployees: [],
       moveCost,
+      chainMemory,
     }).tasks;
   }
 

@@ -35,8 +35,12 @@ export function getPolicy() {
   return POLICY;
 }
 
+// Times are compared as numbers (getTime) in every check below that runs
+// hundreds of thousands of times: `a.start < b.end` on two Date objects goes
+// through ToPrimitive each time and cost more than the logic itself. An Invalid
+// Date gives NaN either way, so every comparison with it stays false as before.
 function tasksOverlap(a, b) {
-  return a.start < b.end && b.start < a.end;
+  return a.start.getTime() < b.end.getTime() && b.start.getTime() < a.end.getTime();
 }
 
 // The task's required qualifications. reqTypes is the canonical list; an
@@ -128,10 +132,12 @@ function samePosition(pos1, pos2, resolver) {
 // WALK_SPEED_MPS); without one, it falls back to the old fixed
 // distance-units/time-window heuristic.
 function hasInsufficientGap(a, b, resolver) {
-  const earlier = a.start <= b.start ? a : b;
-  const later = a.start <= b.start ? b : a;
-  if (later.start < earlier.end) return false; // overlap is handled by tasksOverlap
-  const gapMs = later.start - earlier.end;
+  const aFirst = a.start.getTime() <= b.start.getTime();
+  const earlier = aFirst ? a : b;
+  const later = aFirst ? b : a;
+  const laterStart = later.start.getTime(), earlierEnd = earlier.end.getTime();
+  if (laterStart < earlierEnd) return false; // overlap is handled by tasksOverlap
+  const gapMs = laterStart - earlierEnd;
   const exitPos = earlier.exitPos ?? earlier.pos;
   const entryPos = later.entryPos ?? later.pos;
 
@@ -204,9 +210,10 @@ export function findConflicts(employeeName, task, tasks, resolver) {
 // Where the employee actually ends up after their last task before the new
 // one — the exit point (clearup_loc_ref / dest_loc_ref), not the generic POS.
 function getLastTaskExitPos(empTasks, beforeTime) {
+  const before = beforeTime.getTime();
   const prior = empTasks
-    .filter(t => t.end <= beforeTime)
-    .sort((a, b) => b.end - a.end);
+    .filter(t => t.end.getTime() <= before)
+    .sort((a, b) => b.end.getTime() - a.end.getTime());
   return prior.length > 0 ? (prior[0].exitPos ?? prior[0].pos) : null;
 }
 
@@ -215,9 +222,10 @@ function getLastTaskExitPos(empTasks, beforeTime) {
 // below, which cares about both neighbours of a slot, not just the one
 // before it.
 function getNextTaskEntryPos(empTasks, afterTime) {
+  const after = afterTime.getTime();
   const next = empTasks
-    .filter(t => t.start >= afterTime)
-    .sort((a, b) => a.start - b.start);
+    .filter(t => t.start.getTime() >= after)
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
   return next.length > 0 ? (next[0].entryPos ?? next[0].pos) : null;
 }
 
@@ -268,8 +276,18 @@ function scoreEmployee(staff, assignedTasks, task, resolver) {
   return { dist, load: empTasks.length };
 }
 
-function commit(result, assignedTasks, taskId, employeeName) {
-  const idx = result.findIndex(t => t.id === taskId);
+// id -> position in `list`, FIRST occurrence only: that is what the findIndex it
+// replaces returned when an id repeats. Positions stay valid while the array
+// only has elements replaced in place (never inserted or removed), which is how
+// every caller below uses its `result`.
+function indexFirstById(list) {
+  const index = new Map();
+  for (let i = 0; i < list.length; i++) if (!index.has(list[i].id)) index.set(list[i].id, i);
+  return index;
+}
+
+function commit(result, index, assignedTasks, taskId, employeeName) {
+  const idx = index.get(taskId);
   result[idx] = { ...result[idx], employee: employeeName };
   if (!assignedTasks[employeeName]) assignedTasks[employeeName] = [];
   assignedTasks[employeeName].push(result[idx]);
@@ -341,18 +359,45 @@ function conflictsInWindow(list, task, resolver, bounds) {
 const CHAIN_MAX_DEPTH = 4;
 const CHAIN_NODE_BUDGET = 100;
 function findChainPlacement(task, staffByLoad, assigned, resolver, visited, isBumpable = t => !t.isLocked,
-  budget = { left: CHAIN_NODE_BUDGET }, depth = 0) {
+  budget = { left: CHAIN_NODE_BUDGET }) {
+  const found = chainSearch(task, staffByLoad, assigned, new Map(), resolver, visited, isBumpable, budget, 0);
+  if (!found) return null;
+  const out = { ...assigned };
+  for (const [name, list] of found.over) out[name] = list;
+  return { assigned: out, migrations: found.migrations };
+}
+
+// The search itself. A branch's tentative assignment is `assigned` plus an
+// overlay `over` (name -> list) holding only the lists the branch changed:
+// copying the whole assignment object (~300 people) at every node cost more
+// than everything else here, and nearly every search ends in failure, where the
+// copy is never used. The full object is built once, for a found placement.
+//
+// budget.trace (optional) collects what a search looked at: the tasks it tried
+// to place and the people whose day it read (see improveAssignment's chainMemory).
+// budget.eligibleNames (optional) = task => Set of the names with at least one
+// shift that passes canTake for it: people outside it are skipped without the
+// qualification and shift test (which it would fail anyway), so the answer is
+// the same, only the ~300-person scan per node gets cheap.
+function chainSearch(task, staffByLoad, assigned, over, resolver, visited, isBumpable, budget, depth) {
+  const trace = budget.trace;
+  if (trace) trace.tasks.add(task);
+  const only = budget.eligibleNames ? budget.eligibleNames(task) : null;
+  const listOf = (ov, name) => (ov.has(name) ? ov.get(name) : assigned[name] || []);
+  const withList = (ov, name, list) => new Map(ov).set(name, list);
   for (const s of staffByLoad) {
+    if (only && !only.has(s.name)) continue;
     if (visited.has(s.name)) continue;
     if (!canTake(s, task, resolver)) continue;
+    if (trace) trace.names.add(s.name);
 
-    const empTasks = assigned[s.name] || [];
+    const empTasks = listOf(over, s.name);
     const conflicts = budget.bounds
       ? conflictsInWindow(empTasks, task, resolver, budget.bounds)
       : empTasks.filter(ct => conflictsWith(ct, task, resolver));
 
     if (conflicts.length === 0) {
-      return { assigned: { ...assigned, [s.name]: [...empTasks, task] }, migrations: [{ task, to: s.name }] };
+      return { over: withList(over, s.name, [...empTasks, task]), migrations: [{ task, to: s.name }] };
     }
     if (depth >= CHAIN_MAX_DEPTH) continue;
     if (conflicts.some(ct => !isBumpable(ct))) continue;
@@ -360,21 +405,21 @@ function findChainPlacement(task, staffByLoad, assigned, resolver, visited, isBu
     budget.left--;
 
     visited.add(s.name);
-    let working = { ...assigned, [s.name]: empTasks.filter(t => !conflicts.includes(t)) };
+    let working = withList(over, s.name, empTasks.filter(t => !conflicts.includes(t)));
     const chainMigrations = [];
     let ok = true;
     for (const conflict of conflicts) {
-      const sub = findChainPlacement(conflict, staffByLoad, working, resolver, visited, isBumpable, budget, depth + 1);
+      const sub = chainSearch(conflict, staffByLoad, assigned, working, resolver, visited, isBumpable, budget, depth + 1);
       if (!sub) { ok = false; break; }
-      working = sub.assigned;
+      working = sub.over;
       chainMigrations.push(...sub.migrations);
     }
     visited.delete(s.name);
 
     if (ok) {
-      working = { ...working, [s.name]: [...(working[s.name] || []), task] };
+      working = withList(working, s.name, [...listOf(working, s.name), task]);
       chainMigrations.push({ task, to: s.name });
-      return { assigned: working, migrations: chainMigrations };
+      return { over: working, migrations: chainMigrations };
     }
   }
   return null;
@@ -395,6 +440,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return { tasks: result, changes: [] };
+  const index = indexFirstById(result);
 
   let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
@@ -453,7 +499,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
         // Every migration except the last one (the broken task itself,
         // handled by the shared commit below) is a knock-on displacement.
         for (const { task: mt, to } of chain.migrations.slice(0, -1)) {
-          const midx = result.findIndex(t => t.id === mt.id);
+          const midx = index.get(mt.id);
           const from = result[midx].employee;
           result[midx] = { ...result[midx], employee: to };
           changes.push({ taskId: mt.id, taskName: mt.name, from, to, backlog: false, viaBump: true });
@@ -476,7 +522,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
       }
     }
 
-    const idx = result.findIndex(t => t.id === task.id);
+    const idx = index.get(task.id);
     if (bestStaff) {
       result[idx] = { ...result[idx], employee: bestStaff.name };
       if (!viaChain) {
@@ -543,10 +589,10 @@ function routeStats(shifts, sorted, resolver) {
     const entry = t.entryPos ?? t.pos;
     if (prev === null) {
       if (basePos) walk += posDist(basePos, entry, resolver);
-    } else if (t.start >= prev.end) {
+    } else if (t.start.getTime() >= prev.end.getTime()) {
       const exit = prev.exitPos ?? prev.pos;
       walk += posDist(exit, entry, resolver);
-      const spare = (t.start - prev.end) - transitMs(exit, entry, resolver);
+      const spare = (t.start.getTime() - prev.end.getTime()) - transitMs(exit, entry, resolver);
       slackShort += Math.max(0, TARGET_SLACK_MS - spare) / 60000;
     }
     prev = t;
@@ -599,6 +645,20 @@ function conflictsSorted(sorted, task, resolver, bounds) {
   return false;
 }
 
+// 53-bit string hash (cyrb53) for the fingerprints above; a collision could
+// only make a repeat search be skipped, never produce an invalid plan.
+function hash53(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
 const LONG_TASK_WINDOW_MS = 4 * 3600000;
 function conflictBounds(tasks, resolver) {
   let maxDur = 0;
@@ -622,7 +682,8 @@ function conflictBounds(tasks, resolver) {
 // A copy of `list` (ordered by start) with `task` added in its place.
 function insertSorted(list, task) {
   let i = list.length;
-  while (i > 0 && list[i - 1].start > task.start) i--;
+  const ts = task.start.getTime();
+  while (i > 0 && list[i - 1].start.getTime() > ts) i--;
   return [...list.slice(0, i), task, ...list.slice(i)];
 }
 
@@ -824,6 +885,19 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 //                      unpruned round confirms a true local optimum. It only
 //                      catches a rare case (see below) and costs as much as
 //                      the rest, so batch updates on a deadline skip it
+//   chainMemory      — an object the caller keeps across calls (start it as
+//                      {}). A caller that calls this once per added person
+//                      otherwise repeats the same hopeless displacement-chain
+//                      searches in every call. For each task whose search found
+//                      nothing it remembers exactly what that search looked at —
+//                      which people's days (their tasks and shifts) and which
+//                      tasks it tried to move — and skips the task in a later
+//                      call while none of that has changed and nobody new can
+//                      take any of those tasks. The search is deterministic, so
+//                      a skipped search is one that would fail again: the result
+//                      is the same as without the memory. Valid only while the
+//                      tasks' own data (times, stands, qualifications) and the
+//                      other options stay the same between the calls.
 //   moveCost         — task => cost units; the price of taking an already
 //                      assigned task away from the employee it had on input
 //                      (moving it back refunds it). A published plan has a
@@ -831,7 +905,7 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 //                      reshuffled hundreds of unrelated assignments for tiny
 //                      gains. Default: no price (a full planning run).
 export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { frozenBefore, priorityUntil, weights, deadline, moveCost, confirmRound = true } = options;
+  const { frozenBefore, priorityUntil, weights, deadline, moveCost, confirmRound = true, chainMemory } = options;
   const originalEmp = new Map();
   if (moveCost) for (const t of tasks) if (t.employee !== 'Не назначено') originalEmp.set(t.id, t.employee);
   // Change in the disruption price if `task` goes from `from` to `to`.
@@ -866,6 +940,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
   let epoch = 0;
   const overCache = new Map();
   const gainCache = new Map();
+  const printCache = new Map();
   const rebuildByEmp = () => {
     byEmp = {};
     for (const name of shiftsByName.keys()) byEmp[name] = [];
@@ -878,6 +953,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     for (const list of Object.values(byEmp)) list.sort((a, b) => a.start - b.start);
     gainCache.clear();
     overCache.clear();
+    printCache.clear();
     epoch++;
   };
   rebuildByEmp();
@@ -925,9 +1001,9 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       const base = baseOf(name);
       return base ? W.walk * posDist(base, entry, resolver) : 0;
     }
-    if (next.start < prev.end) return 0;
+    if (next.start.getTime() < prev.end.getTime()) return 0;
     const exit = prev.exitPos ?? prev.pos;
-    const spare = (next.start - prev.end) - transitMs(exit, entry, resolver);
+    const spare = (next.start.getTime() - prev.end.getTime()) - transitMs(exit, entry, resolver);
     return W.walk * posDist(exit, entry, resolver) + W.slack * Math.max(0, TARGET_SLACK_MS - spare) / 60000;
   };
   // Shift bounds as plain numbers, once.
@@ -1002,7 +1078,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
   // actually changed since, instead of the whole cross product again.
   const version = new Map();
   const invalidate = name => {
-    gainCache.delete(name); overCache.delete(name);
+    gainCache.delete(name); overCache.delete(name); printCache.delete(name);
     version.set(name, (version.get(name) ?? 0) + 1);
   };
   const seenByTask = new Map();
@@ -1051,6 +1127,66 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     for (const n of eligibleOf(task).names) s += version.get(n) ?? 0;
     return s;
   };
+  // ── Cross-call memory of failed chain searches (options.chainMemory) ──
+  // A person's day as a fingerprint: their shifts and the ids of their tasks,
+  // recomputed only after their list changed.
+  const empPrint = name => {
+    let p = printCache.get(name);
+    if (p === undefined) {
+      let text = name;
+      for (const sh of shiftsByName.get(name) || []) text += '|' + sh.shiftStart.getTime() + '-' + sh.shiftEnd.getTime();
+      text += '#';
+      for (const t of byEmp[name] || []) text += t.id + ',';
+      p = hash53(text);
+      printCache.set(name, p);
+    }
+    return p;
+  };
+  // Who is on the roster, with what shifts and qualifications — only the
+  // people whose entry differs from the one a search saw can have become able
+  // to take something new. Shared between calls while nothing changed.
+  let failures = null, rosterNow = null;
+  const changedCache = new Map();
+  if (chainMemory) {
+    failures = chainMemory.failures ??= new Map();
+    rosterNow = new Map();
+    for (const [name, shifts] of shiftsByName) {
+      let text = '';
+      for (const sh of shifts) text += sh.shiftStart.getTime() + '-' + sh.shiftEnd.getTime() + '@' + (sh.basePos ?? '') + '[' + sh.quals.join(',') + ']';
+      rosterNow.set(name, hash53(text));
+    }
+    const last = chainMemory.roster;
+    if (last && last.size === rosterNow.size && [...rosterNow].every(([n, v]) => last.get(n) === v)) rosterNow = last;
+    chainMemory.roster = rosterNow;
+  }
+  const rosterChangedSince = old => {
+    let names = changedCache.get(old);
+    if (!names) {
+      names = [];
+      for (const [name, v] of rosterNow) if (old.get(name) !== v) names.push(name);
+      changedCache.set(old, names);
+    }
+    return names;
+  };
+  const knownHopeless = task => {
+    const rec = failures?.get(task.id);
+    if (!rec) return false;
+    for (const [name, p] of rec.prints) if (empPrint(name) !== p) return false;
+    if (rec.roster !== rosterNow) {
+      for (const name of rosterChangedSince(rec.roster)) {
+        if (rec.prints.has(name)) continue;
+        const shifts = shiftsByName.get(name) || [];
+        if (rec.tasks.some(q => shifts.some(sh => canTake(sh, q, resolver)))) return false;
+      }
+    }
+    return true;
+  };
+  const rememberHopeless = (task, trace) => {
+    const prints = new Map();
+    for (const name of trace.names) prints.set(name, empPrint(name));
+    failures.set(task.id, { prints, tasks: [...trace.tasks], roster: rosterNow });
+  };
+
   const insertBacklog = () => {
     let inserted = 0;
     const pool = result.filter(t =>
@@ -1079,11 +1215,18 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
         continue;
       }
       if (chainFailedAt.get(task.id) === chainStamp(task)) continue;
+      // Remembered from an earlier call: the same search would fail again.
+      if (knownHopeless(task)) { chainFailedAt.set(task.id, chainStamp(task)); continue; }
       const staffByLoad = [...staff].sort(
         (a, b) => (byEmp[a.name] || []).length - (byEmp[b.name] || []).length
       );
-      const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable, { left: CHAIN_NODE_BUDGET, bounds });
-      if (!chain) { chainFailedAt.set(task.id, chainStamp(task)); continue; }
+      const trace = failures ? { names: new Set(), tasks: new Set() } : undefined;
+      const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable, { left: CHAIN_NODE_BUDGET, bounds, trace, eligibleNames: t => eligibleOf(t).set });
+      if (!chain) {
+        chainFailedAt.set(task.id, chainStamp(task));
+        if (trace) rememberHopeless(task, trace);
+        continue;
+      }
       for (const { task: mt, to } of chain.migrations) {
         const idx = indexById.get(mt.id);
         if (scope) {
@@ -1208,7 +1351,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
 // task, repeat. A placement's cost is the weighted marginal cost: the load it
 // adds (2n+1 for an employee already at n) plus the insertion walking
 // distance. Returns the tasks nobody could take, for the later passes.
-function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
+function constructRegret(toAssign, staff, assignedTasks, result, index, resolver, W) {
   const costFor = (task, s) => {
     if (!canTake(s, task, resolver)) return null;
     const emp = assignedTasks[s.name] || [];
@@ -1273,7 +1416,7 @@ function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
       best.set(pick.task.id, summarize(costs));
       continue;
     }
-    commit(result, assignedTasks, pick.task.id, chosen.name);
+    commit(result, index, assignedTasks, pick.task.id, chosen.name);
     remaining.delete(pick.task.id);
 
     // Only the employee who just received a task changed. Tasks it can affect
@@ -1323,7 +1466,7 @@ function constructRegret(toAssign, staff, assignedTasks, result, resolver, W) {
 // thinly and fragmenting everyone's free time — which on days short of staff
 // leaves fewer tasks open than regret. Load balance is left to the
 // improvement search afterwards (it never gives up a placed task).
-function constructBestFit(toAssign, staff, assignedTasks, result, resolver) {
+function constructBestFit(toAssign, staff, assignedTasks, result, index, resolver) {
   const order = [...toAssign].sort((a, b) => a.end - b.end || a.start - b.start);
   const backlog = [];
   for (const task of order) {
@@ -1342,7 +1485,7 @@ function constructBestFit(toAssign, staff, assignedTasks, result, resolver) {
         best = s; bestFree = free; bestBreadth = breadth;
       }
     }
-    if (best) commit(result, assignedTasks, task.id, best.name);
+    if (best) commit(result, index, assignedTasks, task.id, best.name);
     else backlog.push(task);
   }
   return backlog;
@@ -1381,6 +1524,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
 
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return result;
+  const index = indexFirstById(result);
 
   let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
@@ -1418,9 +1562,9 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   let backlog = [];
   const construction = options.construction ?? 'regret';
   if (construction === 'regret') {
-    backlog = constructRegret(toAssign, staff, assignedTasks, result, resolver, resolveWeights(options.weights));
+    backlog = constructRegret(toAssign, staff, assignedTasks, result, index, resolver, resolveWeights(options.weights));
   } else if (construction === 'bestfit') {
-    backlog = constructBestFit(toAssign, staff, assignedTasks, result, resolver);
+    backlog = constructBestFit(toAssign, staff, assignedTasks, result, index, resolver);
   } else {
     for (const task of toAssign) {
       let bestStaff = null, bestScore = null;
@@ -1433,7 +1577,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
           bestScore = score; bestStaff = s;
         }
       }
-      bestStaff ? commit(result, assignedTasks, task.id, bestStaff.name) : backlog.push(task);
+      bestStaff ? commit(result, index, assignedTasks, task.id, bestStaff.name) : backlog.push(task);
     }
   }
 
@@ -1455,7 +1599,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
     if (chain) {
       assignedTasks = chain.assigned;
       for (const { task: mt, to } of chain.migrations) {
-        const idx = result.findIndex(t => t.id === mt.id);
+        const idx = index.get(mt.id);
         result[idx] = { ...result[idx], employee: to };
       }
     } else {
@@ -1485,7 +1629,7 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
       const load = (assignedTasks[s.name] || []).length;
       if (load < bestLoad) { bestLoad = load; bestStaff = s; }
     }
-    if (bestStaff) commit(result, assignedTasks, task.id, bestStaff.name);
+    if (bestStaff) commit(result, index, assignedTasks, task.id, bestStaff.name);
     // Otherwise the task stays unassigned — no qualified, on-shift, conflict-free employee exists.
   }
 
@@ -1614,8 +1758,9 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     if (c.to) touched.add(c.to);
     if (c.backlog) placeIds.add(c.taskId);
   }
+  const repairedIndex = indexFirstById(result);
   for (const id of changedIds) {
-    const t = result.find(x => x.id === id);
+    const t = result[repairedIndex.get(id)];
     if (t && t.employee !== 'Не назначено') touched.add(t.employee);
   }
 
