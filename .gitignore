@@ -4,3 +4,11 @@ web_app/dist/
 __pycache__/
 .env
 agent.log
+
+# Real exports must never be committed (they hold employee data). Use the
+# upload buttons in the app, or put files outside the repository.
+web_app/public/demo/
+web_app/public/sample_data.csv
+tb_*.csv
+tb_*.json
+VKO_TRANSPORT*.xlsx

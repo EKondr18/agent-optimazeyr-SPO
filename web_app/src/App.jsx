@@ -225,7 +225,7 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
 }
 
 function SidebarContent({
-  isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
+  isDark, hasData, fileRef, handleFileUpload,
   manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
@@ -255,12 +255,6 @@ function SidebarContent({
         <Space direction="vertical" style={{ width: '100%' }}>
           <Button icon={<UploadOutlined />} block onClick={() => fileRef.current?.click()}>
             Загрузить CSV
-          </Button>
-          <Button block onClick={() => { handleDemoLoad(); onClose?.(); }}>
-            🎬 Демо-данные (CSV)
-          </Button>
-          <Button block onClick={() => { handleDemoLoadJson(); onClose?.(); }}>
-            🗂️ Демо-данные (полный набор)
           </Button>
         </Space>
 
@@ -770,36 +764,6 @@ export default function App() {
     e.target.value = '';
   }
 
-  function handleDemoLoad() {
-    setIsLoading(true);
-    fetch('./sample_data.csv')
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
-      .then(loadData)
-      .catch(e => { setError(`Демо-данные недоступны: ${e.message}`); setIsLoading(false); });
-  }
-
-  function handleDemoLoadJson() {
-    setIsLoading(true);
-    setError(null);
-    const files = [
-      'tb_sub_orders', 'tb_shifts', 'tb_resources',
-      'tb_res_qual', 'tb_relation_resource_qualification', 'tb_relation_shift_qualification',
-    ];
-    Promise.all(files.map(name =>
-      fetch(`./demo/${name}.json`).then(r => {
-        if (!r.ok) throw new Error(`${name}.json: HTTP ${r.status}`);
-        return r.json();
-      })
-    ))
-      .then(([orders, shifts, resources, resQual, resourceQualifications, shiftQualifications]) => {
-        const parsed = parseJsonExport({ orders, shifts, resources, resQual, resourceQualifications, shiftQualifications });
-        if (parsed.tasks.length === 0) throw new Error('Демо-данные не содержат задач');
-        applyParsedData(parsed);
-      })
-      .catch(e => setError(`Демо-данные недоступны: ${e.message}`))
-      .finally(() => setIsLoading(false));
-  }
-
   function handleManualFileChange(key, e) {
     const file = e.target.files[0];
     e.target.value = ''; // allow re-selecting the same file after a fix
@@ -1207,7 +1171,7 @@ export default function App() {
   const hasData = tasksDB.length > 0;
 
   const sidebarProps = {
-    isDark, hasData, fileRef, handleFileUpload, handleDemoLoad, handleDemoLoadJson,
+    isDark, hasData, fileRef, handleFileUpload,
     manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
