@@ -1,11 +1,9 @@
 import { useState, useMemo } from 'react';
 import { Table, Input, InputNumber, Button, Space, Typography } from 'antd';
+import { fmtHM as fmt } from '../utils/tz';
+import { shortFlight } from '../utils/uiFormat';
 
 const { Text } = Typography;
-
-function fmt(d) {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
   const [delays, setDelays] = useState({});
@@ -38,6 +36,7 @@ export default function TaskDelayPanel({ tasks, selectedDate, onApplyDelays }) {
       dataIndex: 'flight',
       key: 'flight',
       width: 120,
+      render: (_, t) => <span title={t.flight}>{shortFlight(t.flight)}</span>,
     },
     {
       title: 'POS',

@@ -14,6 +14,7 @@
 // guaranteed-minimum solve — good enough for a planning estimate, same
 // spirit as the optimizer's own pass-based heuristic.
 import { hasAllQuals } from '../optimizer.js';
+import { dayStart } from './tz.js';
 
 export const GRANULARITY_OPTIONS = [
   { label: '5 мин', value: 5 },
@@ -72,7 +73,9 @@ export function packIntoChannels(tasks, roster = []) {
 // active in a bucket only when it actually has a task overlapping it — the
 // gaps between a channel's own tasks are real idle time, not demand.
 export function bucketizeChannels(channels, windowStart, windowDays, granularityMin) {
-  const base = new Date(windowStart + 'T00:00:00');
+  // The Moscow day, not the machine's own: the bucket grid must be the same in
+  // the browser, the worker and a backend.
+  const base = dayStart(windowStart);
   const bucketMs = granularityMin * 60000;
   const bucketCount = Math.ceil((windowDays * 24 * 3600000) / bucketMs);
   const buckets = Array.from({ length: bucketCount }, (_, i) => {

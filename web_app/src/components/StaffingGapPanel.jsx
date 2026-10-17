@@ -1,21 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Typography, Empty, Alert, Segmented, Tag, Button } from 'antd';
-import Plot from 'react-plotly.js';
+import { Typography, Empty, Alert, Segmented, Tag, Button, Spin } from 'antd';
+import Plot from './Plot';
 import { computeStaffingGaps } from '../utils/staffingGap';
 import { GRANULARITY_OPTIONS } from '../utils/staffDemand';
-import { qualColor } from '../utils/qualColors';
-import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
+import { makeQualColors, legendItems, textOn } from '../utils/qualColors';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange, axisTime } from '../utils/ganttAxis';
+import { fmtDMHM as fmtDT, fmtHM as fmtT, dayStart } from '../utils/tz';
+import { flightWithFull, countRu, statusColor } from '../utils/uiFormat';
+import QualLegend from './QualLegend';
 
 const { Text } = Typography;
 
-function fmtDT(d) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function fmtT(d) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 function fmtHours(ms) {
   const h = ms / 3600000;
   return Number.isInteger(h) ? `${h}` : h.toFixed(1);
@@ -67,9 +62,10 @@ function actionTasks(action, finalTasks) {
 // labeled directly on wide-enough bars (not hover-only) plus a color
 // legend, so the plan reads at a glance instead of needing to hover every
 // bar — answers "фамилия и какую квалификацию он закроет и когда" directly.
-function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
+function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark, qualOrder }) {
   const [visibleRange, setVisibleRange] = useState(null);
-  const dateObj = new Date(windowStart + 'T00:00:00');
+  const qc = useMemo(() => makeQualColors(qualOrder), [qualOrder]);
+  const dateObj = dayStart(windowStart);
   const nextDay = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
   const range = visibleRange || [dateObj.getTime(), nextDay.getTime()];
 
@@ -90,29 +86,29 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
   const rowKey = a => keyOf.get(a);
   const names = rows.map(r => rowKey(r.action));
 
-  const usedQuals = useMemo(() => {
-    const set = new Set();
-    for (const r of rows) for (const t of r.tasks) set.add(t.reqType || '?');
-    return [...set];
-  }, [rows]);
+  const legend = useMemo(() => {
+    const counts = new Map();
+    for (const r of rows) for (const t of r.tasks) counts.set(qc.keyOf(t), (counts.get(qc.keyOf(t)) || 0) + 1);
+    return legendItems(counts, qc, qualOrder);
+  }, [rows, qc, qualOrder]);
 
   const traces = useMemo(() => rows.map(({ action, tasks }) => ({
     type: 'bar',
     orientation: 'h',
     name: action.name,
     x: tasks.map(t => t.end - t.start),
-    base: tasks.map(t => t.start.getTime()),
+    base: tasks.map(t => axisTime(t.start.getTime())),
     y: tasks.map(() => rowKey(action)),
-    marker: { color: tasks.map(t => qualColor(t.reqType || '?')), opacity: 0.9, line: { color: isDark ? '#000' : '#fff', width: 1 } },
+    marker: { color: tasks.map(t => qc.colorOf(qc.keyOf(t))), opacity: 0.9, line: { color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)', width: 1 } },
     text: tasks.map(t => {
       const mins = Math.round((t.end - t.start) / 60000);
       return mins >= 18 ? (t.reqType || '') : '';
     }),
     textposition: 'inside',
     insidetextanchor: 'middle',
-    textfont: { size: 10, color: '#fff' },
+    textfont: { size: 10, color: tasks.map(t => textOn(qc.colorOf(qc.keyOf(t)))) },
     customdata: tasks.map(t => ({
-      qual: t.reqType, flight: t.flight, pos: t.pos, start: fmtT(t.start), end: fmtT(t.end),
+      qual: t.reqType, flight: flightWithFull(t.flight), pos: t.pos, start: fmtT(t.start), end: fmtT(t.end),
     })),
     hovertemplate:
       `<b>${action.name}</b><br>` +
@@ -121,7 +117,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
       'Время: %{customdata.start} – %{customdata.end}' +
       '<extra></extra>',
     showlegend: false,
-  })), [rows, isDark, keyOf]);
+  })), [rows, isDark, keyOf, qc]);
 
   const ROW_PX = 32;
   const MARGIN_T = 4, MARGIN_B = 8;
@@ -231,23 +227,14 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark }) {
           </div>
         </div>
       </div>
-      {usedQuals.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
-          {usedQuals.map(q => (
-            <span key={q} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: fontColor }}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: qualColor(q), display: 'inline-block' }} />
-              {q}
-            </span>
-          ))}
-        </div>
-      )}
+      <div style={{ marginTop: 8 }}><QualLegend items={legend} isDark={isDark} /></div>
     </div>
   );
 }
 
 export default function StaffingGapPanel({
   tasks, staffDB, targetDate, windowDates, windowStart, windowDays,
-  fullRoster, allShiftsByPerson, distanceResolver, isDark,
+  fullRoster, allShiftsByPerson, distanceResolver, isDark, qualOrder,
   resolution: providedResolution, onApply,
 }) {
   const [granularity, setGranularity] = useState(60);
@@ -321,9 +308,10 @@ export default function StaffingGapPanel({
       ))}
 
       {fullRoster.length > 0 && !resolution && (
-        <Text type="secondary" style={{ display: 'block', marginTop: 16, fontSize: 13 }}>
-          Считаю план вызова на подработку…
-        </Text>
+        <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Spin size="small" />
+          <Text type="secondary" style={{ fontSize: 13 }}>Считаю план вызова на подработку…</Text>
+        </div>
       )}
 
       {fullRoster.length > 0 && resolution && (
@@ -361,6 +349,7 @@ export default function StaffingGapPanel({
               windowStart={windowStart}
               windowDays={windowDays}
               isDark={isDark}
+              qualOrder={qualOrder}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: 12 }}>Подходящих кандидатов на вызов или продление смены не нашлось.</Text>
@@ -383,22 +372,28 @@ export default function StaffingGapPanel({
             </details>
           )}
 
-          {resolution.actions.length > 0 && onApply && (
-            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <Button type="primary" onClick={() => onApply(resolution)}>
-                Применить план: {resolution.actions.filter(a => a.type === 'extend').length} сдвигов смен,{' '}
-                {resolution.actions.filter(a => a.type === 'callin').length} вызовов
-              </Button>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                Сдвиги и вызовы станут сменами в расписании, задачи распределятся как в плане.
-                Это предложение — согласуйте его с сотрудниками и HR.
-              </Text>
-            </div>
-          )}
+          {resolution.actions.length > 0 && onApply && (() => {
+            const ext = resolution.actions.filter(a => a.type === 'extend').length;
+            const calls = resolution.actions.filter(a => a.type === 'callin').length;
+            return (
+              <div style={{ marginTop: 12 }}>
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 8 }}
+                  message="План изменит расписание: сдвиги смен и вызовы людей нужно согласовать с сотрудниками и HR."
+                />
+                <Button type="primary" onClick={() => onApply(resolution)}>
+                  Применить план: {countRu(ext, 'сдвиг смены', 'сдвига смен', 'сдвигов смен')},{' '}
+                  {countRu(calls, 'вызов', 'вызова', 'вызовов')}
+                </Button>
+              </div>
+            );
+          })()}
 
           {Object.keys(unresolvedByReason).length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <Text type="warning" style={{ fontSize: 12, display: 'block' }}>
+              <Text style={{ fontSize: 12, display: 'block', color: statusColor(isDark, 'warning') }}>
                 Остаются без исполнителя даже с этим планом — и почему:
               </Text>
               {Object.entries(UNRESOLVED_INFO).filter(([k]) => unresolvedByReason[k]).map(([k, info]) => (

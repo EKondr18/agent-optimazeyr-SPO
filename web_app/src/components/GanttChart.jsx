@@ -1,26 +1,27 @@
-import Plot from 'react-plotly.js';
+import Plot from './Plot';
 import { useMemo, useState } from 'react';
 import { Modal, Button, Typography } from 'antd';
-import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange, axisTime } from '../utils/ganttAxis';
 import { hasAllQuals } from '../optimizer';
 import { getPosDistance } from '../utils/posDistance';
+import { fmtHM, wallClock, dayStart } from '../utils/tz';
+import { makeQualColors, legendItems, textOn } from '../utils/qualColors';
+import { shortFlight, flightWithFull, mutedColor } from '../utils/uiFormat';
+import QualLegend from './QualLegend';
 
-function fmt(d) {
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
+const fmt = fmtHM;
 
-// Local-time <input type="datetime-local"> value <-> Date, consistent with
-// how the rest of the app already reads/writes times via local getters
-// (fmt() above), so this doesn't introduce a second timezone convention.
+// <input type="datetime-local"> value <-> Date in Moscow wall-clock time (the
+// operating timezone, whatever the browser's own is).
 function toDatetimeLocalValue(d) {
+  const w = wallClock(d);
   const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${w.y}-${pad(w.mo)}-${pad(w.d)}T${pad(w.h)}:${pad(w.mi)}`;
 }
 function fromDatetimeLocalValue(s) {
   const [datePart, timePart] = s.split('T');
-  const [y, m, day] = datePart.split('-').map(Number);
   const [h, min] = timePart.split(':').map(Number);
-  return new Date(y, m - 1, day, h, min);
+  return new Date(dayStart(datePart).getTime() + (h * 60 + min) * 60000);
 }
 
 const SEP = '—';
@@ -28,7 +29,7 @@ const TRAVEL_KEY = '__TRAVEL__';
 const ROW_PX = 30;
 
 export default function GanttChart({
-  tasks, staffShifts = [], windowDays = 1, windowStart, colorMap, selectedDate,
+  tasks, staffShifts = [], windowDays = 1, windowStart, qualOrder, selectedDate,
   filterTypes, filterFlight, isDark, distanceResolver,
   draggingTask, onDropAssign, onEditTaskTime, onUnassignTask,
   visibleRange, onVisibleRangeChange,
@@ -53,6 +54,8 @@ export default function GanttChart({
     }
     return set;
   }, [draggingTask, staffShifts]);
+
+  const qc = useMemo(() => makeQualColors(qualOrder), [qualOrder]);
 
   const plotData = useMemo(() => {
     const filtered = tasks.filter(t =>
@@ -193,26 +196,29 @@ export default function GanttChart({
       ([, a], [, b]) => avgDuration(b) - avgDuration(a)
     );
 
+    const barLine = { color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)', width: 1 };
     const traces = orderedEntries.map(([name, taskList]) => {
-      const color = colorMap[name] || '#888';
+      // Bars are colored by the qualification the task needs (the same colors
+      // as the load chart and the call-in plan); the task type is in the tooltip.
+      const colors = taskList.map(t => qc.colorOf(qc.keyOf(t)));
       return {
         type: 'bar',
         orientation: 'h',
         name,
         x: taskList.map(t => t.end - t.start),
-        base: taskList.map(t => t.start.getTime()),
+        base: taskList.map(t => axisTime(t.start.getTime())),
         y: taskList.map(taskYVal),
         text: taskList.map(t => {
           const mins = Math.round((t.end - t.start) / 60000);
-          return mins >= 30 ? t.flight.trim() : '';
+          return mins >= 30 ? shortFlight(t.flight) : '';
         }),
         textposition: 'inside',
         insidetextanchor: 'middle',
-        textfont: { size: 10, color: '#fff' },
+        textfont: { size: 10, color: colors.map(textOn) },
         customdata: taskList.map(t => ({
           id:     t.id,
           desc:   t.name,
-          flight: t.flight,
+          flight: flightWithFull(t.flight),
           pos:    t.pos,
           qual:   t.reqType,
           start:  fmt(t.start),
@@ -228,7 +234,7 @@ export default function GanttChart({
           'Квалификация: %{customdata.qual}  |  %{customdata.lock}<br>' +
           'Клик — изменить время' +
           '<extra>%{customdata.emp}</extra>',
-        marker: { color, opacity: 0.9 },
+        marker: { color: colors, opacity: 0.9, line: barLine },
       };
     });
 
@@ -255,7 +261,7 @@ export default function GanttChart({
           ? gapMs < neededSeconds * 1000
           : (gapMs < 5 * 60000 && getPosDistance(exitPos, entryPos) >= 5);
         travelX.push(gapMs);
-        travelBase.push(prev.end.getTime());
+        travelBase.push(axisTime(prev.end.getTime()));
         travelY.push(`${emp}${SEP}${TRAVEL_KEY}`);
         travelColor.push(insufficient ? '#ff4d4f' : (isDark ? '#5a6b8c' : '#a8b5cc'));
         const neededMin = neededSeconds != null ? Math.round(neededSeconds / 60) : null;
@@ -307,8 +313,8 @@ export default function GanttChart({
           type: 'rect',
           xref: 'x',
           yref: 'y',
-          x0: s.shiftStart.getTime(),
-          x1: s.shiftEnd.getTime(),
+          x0: axisTime(s.shiftStart.getTime()),
+          x1: axisTime(s.shiftEnd.getTime()),
           y0: y0 - 0.42,
           y1: y1 + 0.42,
           fillcolor,
@@ -318,7 +324,18 @@ export default function GanttChart({
       });
 
     return { traces, yOrderBottomUp, rowsTopDown: yRowsTopDown, rowCount, shiftShapes };
-  }, [tasks, staffShifts, colorMap, filterTypes, filterFlight, expanded, isDark, qualifyingEmployees, distanceResolver]);
+  }, [tasks, staffShifts, qc, filterTypes, filterFlight, expanded, isDark, qualifyingEmployees, distanceResolver]);
+
+  // What the colors mean: only the codes of the bars actually drawn.
+  const legend = useMemo(() => {
+    const counts = new Map();
+    for (const t of tasks) {
+      if (t.employee === 'Не назначено' || !filterTypes.includes(t.name)) continue;
+      const k = qc.keyOf(t);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return legendItems(counts, qc, qualOrder);
+  }, [tasks, filterTypes, qc, qualOrder]);
 
   function toggleEmployee(emp) {
     setExpanded(prev => {
@@ -351,7 +368,7 @@ export default function GanttChart({
 
   if (!plotData) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 128, color: '#9ca3af', fontSize: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 128, color: mutedColor(isDark), fontSize: 14 }}>
         Нет данных — загрузите смены сотрудников на эту дату
       </div>
     );
@@ -359,7 +376,7 @@ export default function GanttChart({
 
   const { traces, yOrderBottomUp, rowsTopDown, rowCount, shiftShapes } = plotData;
 
-  const dateObj = new Date((windowStart || selectedDate) + 'T00:00:00');
+  const dateObj = dayStart(windowStart || selectedDate);
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
   // The visible time range is shared/controlled from above (App.jsx) so
   // zooming this chart also updates the backlog chart's ruler and vice
@@ -373,12 +390,21 @@ export default function GanttChart({
     type: 'line',
     xref: 'x',
     yref: 'paper',
-    x0: dateObj.getTime() + (i + 1) * 24 * 3600000,
-    x1: dateObj.getTime() + (i + 1) * 24 * 3600000,
+    x0: axisTime(dateObj.getTime() + (i + 1) * 24 * 3600000),
+    x1: axisTime(dateObj.getTime() + (i + 1) * 24 * 3600000),
     y0: 0,
     y1: 1,
     line: { color: isDark ? '#444' : '#ccc', width: 1, dash: 'dot' },
   }));
+
+  // The selected day stands out from the neighbouring days of the window.
+  const selStart = dayStart(selectedDate).getTime();
+  const selectedDayShape = {
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: axisTime(selStart), x1: axisTime(selStart + 24 * 3600000), y0: 0, y1: 1,
+    fillcolor: isDark ? 'rgba(22,119,255,0.10)' : 'rgba(22,119,255,0.07)',
+    line: { width: 0 }, layer: 'below',
+  };
 
   const MARGIN_T = 4;
   const MARGIN_B = 8;
@@ -400,13 +426,15 @@ export default function GanttChart({
   const plotBg    = isDark ? '#1a1a2e' : '#FAFAFA';
   const borderClr = isDark ? '#2d2d2d' : '#f0f0f0';
   const labelBg   = isDark ? '#1a1a2e' : '#FAFAFA';
-  const subColor  = isDark ? '#a0a0b8' : '#666';
+  const subColor  = isDark ? '#a0a0b8' : '#595959';
 
   // Left label column width — must match the top ruler's left margin (and
   // the backlog mini-chart's) so gridlines / time ticks line up everywhere.
   const ML = GANTT_LABEL_WIDTH;
 
   return (
+    <div>
+    <QualLegend items={legend} isDark={isDark} />
     <div style={{ border: `1px solid ${borderClr}`, borderRadius: 8, overflow: 'hidden' }}>
 
       {/* ── Sticky time ruler ── stays visible while scrolling the bars ─────── */}
@@ -418,7 +446,7 @@ export default function GanttChart({
             margin: { l: ML, r: 16 + rulerExtraMargin, t: 6, b: 36, autoexpand: false },
             xaxis: ganttXAxisConfig(range, fontColor, gridColor, true),
             yaxis: { visible: false, fixedrange: true },
-            shapes: dayBoundaryShapes,
+            shapes: [selectedDayShape, ...dayBoundaryShapes],
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
             showlegend: false,
@@ -490,7 +518,7 @@ export default function GanttChart({
                       fontSize: 10,
                       fontWeight: 700,
                       color: '#fff',
-                      background: row.delayMin > 30 ? '#ff4d4f' : '#faad14',
+                      background: row.delayMin > 30 ? '#cf1322' : '#ad6800',
                       borderRadius: 4,
                       padding: '1px 5px',
                       flexShrink: 0,
@@ -507,7 +535,7 @@ export default function GanttChart({
                       fontSize: 10,
                       fontWeight: 700,
                       color: '#fff',
-                      background: row.overtimeMin > 30 ? '#ff4d4f' : '#faad14',
+                      background: row.overtimeMin > 30 ? '#cf1322' : '#ad6800',
                       borderRadius: 4,
                       padding: '1px 5px',
                       flexShrink: 0,
@@ -542,7 +570,7 @@ export default function GanttChart({
                 automargin: false,
                 gridcolor: isDark ? '#2a2a3e' : '#F3F4F6',
               },
-              shapes: [...dayBoundaryShapes, ...shiftShapes],
+              shapes: [selectedDayShape, ...dayBoundaryShapes, ...shiftShapes],
               dragmode: 'zoom', // click-drag over the timeline to zoom into a time range; double-click or the "Home" toolbar button resets
               hovermode: 'closest',
               hoverdistance: 2,
@@ -591,7 +619,7 @@ export default function GanttChart({
           <div>
             <Typography.Text strong>{editingTask.name}</Typography.Text>
             <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>
-              Рейс {editingTask.flight} · POS {editingTask.pos} · {editingTask.employee}
+              <span title={editingTask.flight}>Рейс {shortFlight(editingTask.flight)}</span> · POS {editingTask.pos} · {editingTask.employee}
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
@@ -630,6 +658,7 @@ export default function GanttChart({
           </div>
         )}
       </Modal>
+    </div>
     </div>
   );
 }

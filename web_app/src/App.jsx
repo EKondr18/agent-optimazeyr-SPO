@@ -1,9 +1,11 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
 import {
   ConfigProvider, Layout, Button, Select, Switch, Input,
   Checkbox, Space, Drawer, Collapse, Typography, Alert,
   Spin, Empty, theme as antdTheme, Badge, Divider, message, Modal, Slider, InputNumber,
+  Progress, Tooltip,
 } from 'antd';
+import ru_RU from 'antd/locale/ru_RU';
 import {
   UploadOutlined, ThunderboltOutlined, ClearOutlined,
   MenuOutlined, BulbOutlined, BulbFilled, BarChartOutlined,
@@ -11,7 +13,6 @@ import {
   TeamOutlined, ScheduleOutlined,
 } from '@ant-design/icons';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import { parseCSV, parseJsonExport, parseCsvCollections } from './utils/dataParser';
 import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
@@ -20,13 +21,29 @@ import {
   fitsShift, requiredQuals, validatePlan,
 } from './optimizer';
 import { dataQualityReport } from './utils/dataQuality';
+import { dayKey, dayStart, addDays, daysBetween, fmtHM, fmtDM } from './utils/tz';
+import { rankQuals } from './utils/qualColors';
+import { countRu, pluralRu, shortFlight, mutedColor, statusColor } from './utils/uiFormat';
 import PlanReport from './components/PlanReport';
 import MetricsSummary from './components/MetricsSummary';
-import GanttChart from './components/GanttChart';
-import BacklogPanel from './components/BacklogPanel';
 import TaskDelayPanel from './components/TaskDelayPanel';
-import HourlyLoadChart from './components/HourlyLoadChart';
-import StaffingGapPanel from './components/StaffingGapPanel';
+
+// Everything that draws with Plotly (several MB) is loaded only when the first
+// chart is about to be shown, not with the first screen.
+const GanttChart = lazy(() => import('./components/GanttChart'));
+const BacklogPanel = lazy(() => import('./components/BacklogPanel'));
+const HourlyLoadChart = lazy(() => import('./components/HourlyLoadChart'));
+const StaffingGapPanel = lazy(() => import('./components/StaffingGapPanel'));
+
+function ChartFallback() {
+  return (
+    <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}>
+      <Spin size="small" />
+      <span>Загружаю диаграмму…</span>
+    </div>
+  );
+}
+const Lazy = ({ children }) => <Suspense fallback={<ChartFallback />}>{children}</Suspense>;
 
 const { Sider, Content, Header } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = antdTheme;
@@ -55,18 +72,14 @@ const DELAY_STABILITY_WINDOW_MS = 3 * 3600000;
 // end the search works hardest; beyond it, it polishes whatever's left.
 const DELAY_FROZEN_WINDOW_MS = 3600000;
 
-function fmtTime(d) {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+// All times are shown in Moscow time (the shift day's timezone), whatever the
+// browser's own is — see utils/tz.js.
+const fmtTime = fmtHM;
+const shiftYMD = addDays;
 
-function shiftYMD(dateStr, days) {
-  const d = new Date(dateStr + 'T00:00:00');
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+// Violation identity for "did the plan add any": the task, the kind of
+// problem and (for overlaps/walks) the other task of the pair.
+const violationKey = v => `${v.taskId}|${v.code}|${v.detail ?? ''}`;
 
 // Slot key -> the parseJsonExport argument name it feeds, and the label shown
 // next to its own upload input. csvArg is the matching parseCsvCollections
@@ -97,7 +110,7 @@ function FileDropzone({ label, isDark, status, onFile }) {
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 11, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
       <div
         onClick={() => inputRef.current?.click()}
         onDragOver={e => { e.preventDefault(); setIsOver(true); }}
@@ -115,13 +128,13 @@ function FileDropzone({ label, isDark, status, onFile }) {
           fontSize: 11,
           cursor: 'pointer',
           background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
-          color: isDark ? '#888' : '#999',
+          color: mutedColor(isDark),
         }}
       >
         {status?.error ? (
-          <span style={{ color: '#ff4d4f' }}>Ошибка: {status.error}</span>
+          <span style={{ color: statusColor(isDark, 'danger') }}>Ошибка: {status.error}</span>
         ) : status?.filename ? (
-          <span style={{ color: '#52c41a' }}>✓ {status.filename} ({status.rowCount})</span>
+          <span style={{ color: statusColor(isDark, 'success') }}>✓ {status.filename} ({status.rowCount})</span>
         ) : (
           'перетащите файл или нажмите'
         )}
@@ -151,8 +164,10 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
     const reader = new FileReader();
     reader.onerror = () => onRows(file.name, null, 'не удалось прочитать файл');
     if (isXlsx) {
-      reader.onload = ev => {
+      reader.onload = async ev => {
         try {
+          // The spreadsheet library is large and only this one file kind needs it.
+          const XLSX = await import('xlsx');
           const wb = XLSX.read(ev.target.result, { type: 'array' });
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
@@ -184,7 +199,7 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 11, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
       <div
         onClick={() => inputRef.current?.click()}
         onDragOver={e => { e.preventDefault(); setIsOver(true); }}
@@ -202,13 +217,13 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
           fontSize: 11,
           cursor: 'pointer',
           background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
-          color: isDark ? '#888' : '#999',
+          color: mutedColor(isDark),
         }}
       >
         {status?.error ? (
-          <span style={{ color: '#ff4d4f' }}>Ошибка: {status.error}</span>
+          <span style={{ color: statusColor(isDark, 'danger') }}>Ошибка: {status.error}</span>
         ) : status?.filename ? (
-          <span style={{ color: '#52c41a' }}>✓ {status.filename} ({status.rows.length})</span>
+          <span style={{ color: statusColor(isDark, 'success') }}>✓ {status.filename} ({status.rows.length})</span>
         ) : (
           'перетащите файл (csv/json/xlsx) или нажмите'
         )}
@@ -229,12 +244,14 @@ function SidebarContent({
   manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
   csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
-  availableDates, selectedDate, setSelectedDate,
+  availableDates, datesWithShifts, selectedDate, setSelectedDate,
   handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
   policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
-  filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
+  filterTypes, allTaskTypes, toggleType, setFilterTypes,
   onClose,
 }) {
+  const { token } = antdTheme.useToken();
+  const muted = mutedColor(isDark);
   return (
     <div style={{ padding: '0 12px 16px', height: '100%', overflowY: 'auto' }}>
       {/* Logo */}
@@ -242,15 +259,16 @@ function SidebarContent({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 20 }}>🛫</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.3 }}>Пульт КК — Внуково</div>
-            <div style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>SPO оптимизатор SV+GH</div>
+            {/* The theme's own text color: without it the title is black on the dark panel. */}
+            <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.3, color: token.colorText }}>Пульт КК — Внуково</div>
+            <div style={{ fontSize: 11, color: muted }}>SPO оптимизатор SV+GH</div>
           </div>
         </div>
       </div>
 
       {/* Data loading */}
       <div style={{ marginBottom: 16 }}>
-        <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Данные</Text>
+        <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Данные</Text>
         <input ref={fileRef} type="file" accept=".csv,.txt" onChange={e => { handleFileUpload(e); onClose?.(); }} style={{ display: 'none' }} />
         <Space direction="vertical" style={{ width: '100%' }}>
           <Button icon={<UploadOutlined />} block onClick={() => fileRef.current?.click()}>
@@ -271,7 +289,7 @@ function SidebarContent({
                   const slot = manualFiles[key];
                   return (
                     <div key={key}>
-                      <div style={{ fontSize: 11, color: isDark ? '#888' : '#999', marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontSize: 11, color: muted, marginBottom: 2 }}>{label}</div>
                       <input
                         type="file"
                         accept=".json,.txt"
@@ -279,10 +297,10 @@ function SidebarContent({
                         style={{ fontSize: 11, width: '100%' }}
                       />
                       {slot?.error && (
-                        <div style={{ fontSize: 11, color: '#ff4d4f' }}>Ошибка: {slot.error}</div>
+                        <div style={{ fontSize: 11, color: statusColor(isDark, 'danger') }}>Ошибка: {slot.error}</div>
                       )}
                       {slot?.data && !slot.error && (
-                        <div style={{ fontSize: 11, color: '#52c41a' }}>✓ {slot.filename} ({slot.data.length})</div>
+                        <div style={{ fontSize: 11, color: statusColor(isDark, 'success') }}>✓ {slot.filename} ({slot.data.length})</div>
                       )}
                     </div>
                   );
@@ -348,7 +366,7 @@ function SidebarContent({
                   status={travelGraphFile}
                   onRows={handleTravelGraphRows}
                 />
-                <Text style={{ fontSize: 11, color: isDark ? '#666' : '#999' }}>
+                <Text style={{ fontSize: 11, color: muted }}>
                   Улучшает расчёт расстояний/времени перехода между стоянками в оптимизаторе. Без этих файлов используется упрощённая эвристика по коду стоянки.
                 </Text>
               </Space>
@@ -363,18 +381,18 @@ function SidebarContent({
 
           {/* Date selector */}
           <div style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Дата смены</Text>
+            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Дата смены</Text>
             <Select
               value={selectedDate}
               onChange={setSelectedDate}
               style={{ width: '100%' }}
-              options={availableDates.map(d => ({ value: d, label: d }))}
+              options={availableDates.map(d => ({ value: d, label: datesWithShifts.has(d) ? d : `${d} (нет смен)` }))}
             />
           </div>
 
           {/* Optimizer */}
           <div style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa', display: 'block', marginBottom: 8 }}>Оптимизация</Text>
+            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Оптимизация</Text>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Button
                 type="primary"
@@ -396,7 +414,7 @@ function SidebarContent({
 
             <div style={{ marginTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>Приоритеты (1 = по умолчанию)</Text>
+                <Text style={{ fontSize: 11, color: muted }}>Приоритеты (1 = по умолчанию)</Text>
                 <Button
                   type="link"
                   size="small"
@@ -428,7 +446,7 @@ function SidebarContent({
 
             {/* Operating rules: hard limits, not preferences */}
             <div style={{ marginTop: 12 }}>
-              <Text style={{ fontSize: 11, color: isDark ? '#888' : '#999' }}>Правила (жёсткие ограничения)</Text>
+              <Text style={{ fontSize: 11, color: muted }}>Правила (жёсткие ограничения)</Text>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
                 <Text style={{ fontSize: 12 }} title="До скольких минут после конца смены сотрудник может задержаться, чтобы закончить начатую в смену задачу">
                   Допустимая переработка, мин
@@ -479,7 +497,7 @@ function SidebarContent({
           {/* Task type filter */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: isDark ? '#666' : '#aaa' }}>Типы задач</Text>
+              <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted }}>Типы задач</Text>
               <Button
                 type="link"
                 size="small"
@@ -499,10 +517,7 @@ function SidebarContent({
                   onChange={() => toggleType(name)}
                   style={{ marginInlineStart: 0 }}
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: colorMap[name] || '#888', display: 'inline-block', flexShrink: 0 }} />
-                    <span style={{ fontSize: 12 }} title={name}>{name}</span>
-                  </span>
+                  <span style={{ fontSize: 12 }} title={name}>{name}</span>
                 </Checkbox>
               ))}
             </div>
@@ -516,7 +531,6 @@ function SidebarContent({
 export default function App() {
   const [tasksDB, setTasksDB] = useState([]);
   const [staffDB, setStaffDB] = useState({});
-  const [colorMap, setColorMap] = useState({});
   const [fullRoster, setFullRoster] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
   const [filterTypes, setFilterTypes] = useState([]);
@@ -533,7 +547,7 @@ export default function App() {
   const [conflictInfo, setConflictInfo] = useState(null);
   const [draggingTask, setDraggingTask] = useState(null);
   // Shared zoom/pan range between the main Gantt and the backlog mini-chart
-  // — null means "show the full window" (default); set by either chart's
+  // — null means "the selected day" (default); set by either chart's
   // onRelayout so zooming one updates both rulers together.
   const [ganttVisibleRange, setGanttVisibleRange] = useState(null);
   // Panels whose heavy calculations only matter while they're open — the
@@ -542,8 +556,10 @@ export default function App() {
   const [openPanels, setOpenPanels] = useState(['gantt', 'load']);
   // A heavy optimizer job is running in the worker.
   const [busy, setBusy] = useState(false);
+  const [modal, modalHolder] = Modal.useModal();
   const workerRef = useRef(null);
   const workerWarned = useRef(false);
+  const jobsInFlight = useRef(0);
   const jobSeq = useRef(0);
   // How much each aim matters to the optimizer, as a multiplier on the
   // defaults (1 = default, 0 = ignore it). See DEFAULT_WEIGHTS in optimizer.js.
@@ -564,6 +580,8 @@ export default function App() {
   // job computed from an older plan must not overwrite edits made meanwhile.
   const tasksRef = useRef(tasksDB);
   tasksRef.current = tasksDB;
+  const staffRef = useRef(staffDB);
+  staffRef.current = staffDB;
   const fileRef = useRef();
 
   const manualAllReady = JSON_FILE_SLOTS.every(s => manualFiles[s.key]?.data && !manualFiles[s.key]?.error);
@@ -590,6 +608,10 @@ export default function App() {
   const availableDates = useMemo(
     () => [...new Set(tasksDB.map(t => t.date))].sort(),
     [tasksDB]
+  );
+  const datesWithShifts = useMemo(
+    () => new Set(availableDates.filter(d => (staffDB[d] || []).length > 0)),
+    [availableDates, staffDB]
   );
   // Every qualification the tasks require; the ones nobody holds come first
   // and are marked — those are the candidates for "assign without".
@@ -641,11 +663,31 @@ export default function App() {
     }
     return [...seen.values()];
   }, [staffDB, windowDates]);
+  // Opens on the selected day (an hour is ~3x wider than on the whole 3-day
+  // window); a zoom from an earlier date would show the wrong day.
+  const dayRange = useMemo(
+    () => (selectedDate ? [dayStart(selectedDate).getTime(), dayStart(addDays(selectedDate, 1)).getTime()] : null),
+    [selectedDate]
+  );
+  const windowRange = useMemo(
+    () => (selectedDate ? [dayStart(addDays(selectedDate, -1)).getTime(), dayStart(addDays(selectedDate, 2)).getTime()] : null),
+    [selectedDate]
+  );
+  useEffect(() => { setGanttVisibleRange(null); }, [selectedDate]);
   const allTaskTypes = useMemo(
     () => [...new Set(tasksDB.map(t => t.name))].sort(),
     [tasksDB]
   );
+  // Open tasks of the window (±1 day) and of the selected day alone: the badges
+  // show the day (it matches the "Бэклог" tile), the tooltip the window.
   const backlogCount = ganttTasks.filter(t => t.employee === 'Не назначено').length;
+  const dayBacklogCount = currentTasks.filter(t => t.employee === 'Не назначено').length;
+  // Same codes keep the same colors in every chart, in a fixed order; the array
+  // identity only changes when the ranking itself does.
+  const qualOrderRaw = useMemo(() => rankQuals(tasksDB), [tasksDB]);
+  const qualOrderRef = useRef(qualOrderRaw);
+  if (qualOrderRef.current.join('\u0001') !== qualOrderRaw.join('\u0001')) qualOrderRef.current = qualOrderRaw;
+  const qualOrder = qualOrderRef.current;
   const backlogTasksAll = useMemo(
     () => tasksDB.filter(t => t.employee === 'Не назначено'),
     [tasksDB]
@@ -725,12 +767,11 @@ export default function App() {
   // nobody in the loaded data holds a given qualification at all.
   const futureBacklogTasks = futureResolution?.unresolved ?? [];
 
-  function applyParsedData({ tasks, staffDB: db, colorMap: cm, fullRoster: roster }) {
+  function applyParsedData({ tasks, staffDB: db, fullRoster: roster }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
     const types = [...new Set(tasks.map(t => t.name))];
     setTasksDB(tasks);
     setStaffDB(db);
-    setColorMap(cm);
     setFullRoster(roster || []);
     setPlanStats(null);
     // Open on the first day that has both tasks and shifts — the first task
@@ -860,46 +901,73 @@ export default function App() {
     }
   }
 
+  // The worker is started when the page opens (below), not at the first job:
+  // a page left open across a redeploy would otherwise ask for a worker file
+  // the new build no longer has. If it can't be started, or dies, jobs run on
+  // the page itself and the user is told once. The usual cause is a stale
+  // page: the host answers the old worker's address with index.html, and the
+  // worker fails with an empty "worker error". The page's own bundle still
+  // holds the optimizer, so nothing is lost; reloading brings the new build.
+  function warnWorkerDown() {
+    if (workerWarned.current) return;
+    workerWarned.current = true;
+    message.warning('Фоновый расчёт недоступен (страница, скорее всего, устарела после обновления сайта). Расчёт выполняется на странице — обновите её (Ctrl+F5), чтобы вернуть быструю работу.', 8);
+  }
+  function startWorker() {
+    if (workerRef.current) return workerRef.current;
+    try {
+      const w = new Worker(new URL('./optimizer.worker.js', import.meta.url), { type: 'module' });
+      // A failure with no job waiting (the file could not be loaded) is
+      // noticed here; during a job the job's own handler deals with it.
+      w.addEventListener('error', () => {
+        if (jobsInFlight.current > 0) return;
+        if (workerRef.current === w) workerRef.current = null;
+        try { w.terminate(); } catch { /* already gone */ }
+        warnWorkerDown();
+      });
+      workerRef.current = w;
+    } catch {
+      workerRef.current = null;
+    }
+    return workerRef.current;
+  }
+  useEffect(() => {
+    startWorker();
+    return () => {
+      const w = workerRef.current;
+      workerRef.current = null;
+      try { w?.terminate(); } catch { /* already gone */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Runs a heavy optimizer job in the worker and resolves with its result.
-  // If the worker can't start or dies, the job is retried on the page itself
-  // and the user is told once. The usual cause is a page left open across a
-  // redeploy: the worker file is requested lazily, the old build's copy is
-  // gone, and the host answers with index.html instead — the worker then
-  // fails with an empty "worker error". The page's own bundle still holds the
-  // optimizer, so nothing is lost; reloading the page brings the new build.
   function runJob(kind, payload) {
     const resolverRows = distanceResolver
       ? { locations: locationsFile?.rows || [], travelEdges: travelGraphFile?.rows || [] }
       : null;
     const full = { ...payload, policy, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
-    try {
-      if (!workerRef.current) {
-        workerRef.current = new Worker(new URL('./optimizer.worker.js', import.meta.url), { type: 'module' });
-      }
-    } catch {
-      workerRef.current = null;
-    }
-    const w = workerRef.current;
+    const w = startWorker();
     if (!w) return runJobHere(kind, payload);
     const id = ++jobSeq.current;
+    jobsInFlight.current++;
     return new Promise((resolve, reject) => {
       const onMessage = e => {
         if (e.data.id !== id) return;
         w.removeEventListener('message', onMessage);
         w.removeEventListener('error', onError);
+        jobsInFlight.current--;
         if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.result);
       };
       const onError = e => {
         w.removeEventListener('message', onMessage);
         w.removeEventListener('error', onError);
+        jobsInFlight.current--;
         if (workerRef.current === w) workerRef.current = null;
         try { w.terminate(); } catch { /* already gone */ }
         // A real calculation error comes back as a message from the worker's
         // own try/catch; an 'error' event is the worker itself failing.
-        if (!workerWarned.current) {
-          workerWarned.current = true;
-          message.warning('Фоновый расчёт недоступен (страница, скорее всего, устарела после обновления сайта). Расчёт выполнен на странице — обновите её (Ctrl+F5), чтобы вернуть быструю работу.', 8);
-        }
+        warnWorkerDown();
         runJobHere(kind, payload).then(resolve, reject);
       };
       w.addEventListener('message', onMessage);
@@ -1015,8 +1083,12 @@ export default function App() {
       return;
     }
     const { tasks: resolved, repairs, needsDecision = [] } = outcome;
+    // Looked up by id once: a find() per task made this step quadratic, and it
+    // froze the page for seconds on a full export.
+    const resolvedById = new Map(resolved.map(t => [t.id, t]));
+    const beforeById = new Map(tasksDB.map(t => [t.id, t]));
     for (const id of needsDecision) {
-      const t = resolved.find(x => x.id === id);
+      const t = resolvedById.get(id);
       if (t) message.warning(`«${t.name}» закреплена за ${t.employee}, но он(а) больше не может её выполнить (нет смены или допуска) — нужно решение диспетчера`);
     }
 
@@ -1032,7 +1104,7 @@ export default function App() {
 
     const frozenUntil = new Date(now.getTime() + DELAY_FROZEN_WINDOW_MS);
     const movedCount = resolved.filter(t => {
-      const before = tasksDB.find(u => u.id === t.id);
+      const before = beforeById.get(t.id);
       return before && before.employee !== t.employee;
     }).length;
     if (movedCount > repairs.length) {
@@ -1046,19 +1118,17 @@ export default function App() {
   // later end replaces that shift (in every date bucket it touches, now
   // possibly one more across midnight), each call-in becomes a new shift, and
   // the tasks take the plan's assignments. Checked against the new shifts
-  // before anything is replaced.
+  // before anything is replaced, and confirmed by the dispatcher: it changes
+  // real shifts and calls real people in.
+  //
+  // The check refuses only what the plan itself would break. Violations that
+  // are already in the schedule (typically a task forced onto someone by hand,
+  // "Назначить принудительно") are the dispatcher's earlier decision; they must
+  // not make the plan unappliable for ever, but they are reported, not hidden.
   function handleApplyCallInPlan(resolution) {
-    const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const daysOf = (a, b) => {
-      const out = [];
-      const cur = new Date(a); cur.setHours(0, 0, 0, 0);
-      const end = new Date(b); end.setHours(0, 0, 0, 0);
-      while (cur <= end) { out.push(ymd(cur)); cur.setDate(cur.getDate() + 1); }
-      return out;
-    };
     const db = Object.fromEntries(Object.entries(staffDB).map(([d, list]) => [d, [...list]]));
     const place = obj => {
-      for (const d of daysOf(obj.shiftStart, obj.shiftEnd)) (db[d] ??= []).push(obj);
+      for (const d of daysBetween(dayKey(obj.shiftStart), dayKey(obj.shiftEnd))) (db[d] ??= []).push(obj);
     };
     for (const a of resolution.actions) {
       if (a.type === 'extend') {
@@ -1074,15 +1144,56 @@ export default function App() {
         place({ name: a.name, quals: person?.quals || [], zone: 'APRON', shiftStart: a.shiftStart, shiftEnd: a.shiftEnd, basePos: null, callIn: true });
       }
     }
-    const violations = validatePlan(resolution.tasks, db, selectedDate, distanceResolver, windowDates);
-    if (violations.length > 0) {
-      message.error(`План не применён: ${violations.length} нарушений правил после применения — пересчитайте план`);
+    const before = new Set(validatePlan(tasksDB, staffDB, selectedDate, distanceResolver, windowDates).map(violationKey));
+    const after = validatePlan(resolution.tasks, db, selectedDate, distanceResolver, windowDates);
+    const introduced = after.filter(v => !before.has(violationKey(v)));
+    if (introduced.length > 0) {
+      message.error(`План не применён: он вносит ${countRu(introduced.length, 'новое нарушение', 'новых нарушения', 'новых нарушений')} правил — пересчитайте план`);
       return;
     }
-    setStaffDB(db);
-    setTasksDB(resolution.tasks);
-    const open = resolution.tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено').length;
-    message.success(`План применён: ${resolution.actions.length} изменений смен. Без исполнителя осталось ${open}.`);
+
+    const ext = resolution.actions.filter(a => a.type === 'extend').length;
+    const calls = resolution.actions.filter(a => a.type === 'callin').length;
+    const eased = resolution.actions.filter(a => a.tier === 'tight' || a.tier === 'forced').length;
+    const startedFrom = tasksDB;
+    const startedStaff = staffDB;
+    modal.confirm({
+      title: 'Применить план вызова?',
+      width: 480,
+      okText: 'Применить',
+      cancelText: 'Отмена',
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            Будет изменено: {countRu(ext, 'смена', 'смены', 'смен')}; вызвано: {countRu(calls, 'человек', 'человека', 'человек')}.
+          </p>
+          {eased > 0 && (
+            <p style={{ marginBottom: 8 }}>
+              Для {eased} из {resolution.actions.length} {pluralRu(resolution.actions.length, 'изменения', 'изменений', 'изменений')} отдых между сменами сокращён или не соблюдён («сжато», «крайний случай») — нужно согласие сотрудников.
+            </p>
+          )}
+          <p style={{ marginBottom: 0 }}><b>Сдвиги и вызовы согласуйте с сотрудниками и HR.</b></p>
+        </div>
+      ),
+      onOk: () => {
+        if (tasksRef.current !== startedFrom || staffRef.current !== startedStaff) {
+          message.warning('Пока открыто окно подтверждения, расписание изменилось — план не применён. Пересчитайте план.');
+          return;
+        }
+        setStaffDB(db);
+        setTasksDB(resolution.tasks);
+        // The report under the metrics must say what is still wrong after the
+        // plan, not what was wrong after the optimizer's own run.
+        setPlanStats(prev => (prev && prev.selectedDate === selectedDate ? { ...prev, violations: after } : prev));
+        const open = resolution.tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено').length;
+        const done = `План применён: ${countRu(resolution.actions.length, 'изменение', 'изменения', 'изменений')} смен. Без исполнителя осталось ${open}.`;
+        if (after.length > 0) {
+          message.warning(`${done} Остаются ${after.length} ${pluralRu(after.length, 'нарушение', 'нарушения', 'нарушений')} правил у закреплённых вручную задач (они были до плана) — см. «Результат оптимизации».`, 8);
+        } else {
+          message.success(done);
+        }
+      },
+    });
   }
 
   function handleAssign(taskId, employeeName, lock) {
@@ -1175,14 +1286,40 @@ export default function App() {
     manualFiles, handleManualFileChange, handleManualJsonLoad, handleManualJsonClear, manualAllReady,
     csvFiles, handleCsvFileSelect, handleCsvLoad, handleCsvClear, csvAllReady,
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
-    availableDates, selectedDate, setSelectedDate,
+    availableDates, datesWithShifts, selectedDate, setSelectedDate,
     handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
     policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
-    filterTypes, allTaskTypes, colorMap, toggleType, setFilterTypes,
+    filterTypes, allTaskTypes, toggleType, setFilterTypes,
   };
 
-  const headerBg = isDark ? '#001529' : '#1677ff';
+  // White text on the header needs ~6:1 on the light theme (#1677ff gave 4.1:1).
+  const headerBg = isDark ? '#001529' : '#0958d9';
   const contentBg = isDark ? '#0d0d0d' : '#f5f5f5';
+  const mutedTxt = mutedColor(isDark);
+
+  // No optimizer run for this date yet: counts of "open" tasks would only mean
+  // "nothing has been done", not a problem, so the badges stay off until then.
+  const calculated = !!planStats && planStats.selectedDate === selectedDate;
+  const awaitingRun = !calculated && currentTasks.length > 0 && currentTasks.every(t => t.employee === 'Не назначено');
+  const backlogBadge = !awaitingRun && dayBacklogCount > 0 && (
+    <Tooltip title={`за ±1 сутки: ${backlogCount}`}>
+      <Badge count={dayBacklogCount} overflowCount={99999} style={{ marginLeft: 8 }} />
+    </Tooltip>
+  );
+
+  // The selected date has no shifts: nobody to assign to. Offer the nearest
+  // date that has some instead of a message that disappears after a few seconds.
+  const noShiftsToday = hasData && selectedDate && !(staffDB[selectedDate] || []).length;
+  const nearestWithShifts = useMemo(() => {
+    if (!selectedDate) return null;
+    const at = dayStart(selectedDate).getTime();
+    let best = null;
+    for (const d of datesWithShifts) {
+      const dist = Math.abs(dayStart(d).getTime() - at);
+      if (best === null || dist < best.dist) best = { d, dist };
+    }
+    return best ? best.d : null;
+  }, [selectedDate, datesWithShifts]);
 
   const collapseItems = hasData && !isLoading ? [
     {
@@ -1190,7 +1327,7 @@ export default function App() {
       label: (
         <span style={{ fontWeight: 600 }}>
           <BarChartOutlined style={{ marginRight: 8 }} />
-          Оперативный план-график ({ganttTasks.length} задач, ±1 сутки от даты)
+          План на {fmtDM(dayStart(selectedDate))}: {currentTasks.length} задач (в окне ±1 сутки — {ganttTasks.length})
         </span>
       ),
       children: (
@@ -1205,30 +1342,39 @@ export default function App() {
             />
             <Button
               size="small"
+              disabled={ganttVisibleRange && ganttVisibleRange[0] === windowRange[0] && ganttVisibleRange[1] === windowRange[1]}
+              onClick={() => setGanttVisibleRange(windowRange)}
+            >
+              Показать ±1 сутки
+            </Button>
+            <Button
+              size="small"
               disabled={!ganttVisibleRange}
               onClick={() => setGanttVisibleRange(null)}
             >
-              🔍 Сбросить масштаб
+              Сбросить масштаб
             </Button>
           </Space>
-          <GanttChart
-            tasks={ganttTasks}
-            staffShifts={ganttStaff}
-            windowDays={GANTT_WINDOW_DAYS}
-            windowStart={windowDates[0]}
-            colorMap={colorMap}
-            selectedDate={selectedDate}
-            filterTypes={filterTypes}
-            filterFlight={filterFlight}
-            isDark={isDark}
-            draggingTask={draggingTask}
-            onDropAssign={handleDropAssign}
-            onEditTaskTime={handleEditTaskTime}
-            onUnassignTask={taskId => handleAssign(taskId, 'Не назначено', false)}
-            distanceResolver={distanceResolver}
-            visibleRange={ganttVisibleRange}
-            onVisibleRangeChange={setGanttVisibleRange}
-          />
+          <Lazy>
+            <GanttChart
+              tasks={ganttTasks}
+              staffShifts={ganttStaff}
+              windowDays={GANTT_WINDOW_DAYS}
+              windowStart={windowDates[0]}
+              qualOrder={qualOrder}
+              selectedDate={selectedDate}
+              filterTypes={filterTypes}
+              filterFlight={filterFlight}
+              isDark={isDark}
+              draggingTask={draggingTask}
+              onDropAssign={handleDropAssign}
+              onEditTaskTime={handleEditTaskTime}
+              onUnassignTask={taskId => handleAssign(taskId, 'Не назначено', false)}
+              distanceResolver={distanceResolver}
+              visibleRange={ganttVisibleRange || dayRange}
+              onVisibleRangeChange={setGanttVisibleRange}
+            />
+          </Lazy>
         </div>
       ),
     },
@@ -1238,25 +1384,27 @@ export default function App() {
         <span style={{ fontWeight: 600 }}>
           <UnorderedListOutlined style={{ marginRight: 8 }} />
           Нераспределённые задачи
-          {backlogCount > 0 && <Badge count={backlogCount} style={{ marginLeft: 8 }} />}
+          {backlogBadge}
         </span>
       ),
       children: (
-        <BacklogPanel
-          tasks={tasksDB}
-          staffList={ganttStaff}
-          windowDates={windowDates}
-          windowStart={windowDates[0]}
-          windowDays={GANTT_WINDOW_DAYS}
-          colorMap={colorMap}
-          onAssign={handleAssign}
-          isDark={isDark}
-          distanceResolver={distanceResolver}
-          onAssignAttempt={attemptAssign}
-          onDragTaskChange={setDraggingTask}
-          visibleRange={ganttVisibleRange}
-          onVisibleRangeChange={setGanttVisibleRange}
-        />
+        <Lazy>
+          <BacklogPanel
+            tasks={tasksDB}
+            staffList={ganttStaff}
+            windowDates={windowDates}
+            windowStart={windowDates[0]}
+            windowDays={GANTT_WINDOW_DAYS}
+            qualOrder={qualOrder}
+            onAssign={handleAssign}
+            isDark={isDark}
+            distanceResolver={distanceResolver}
+            onAssignAttempt={attemptAssign}
+            onDragTaskChange={setDraggingTask}
+            visibleRange={ganttVisibleRange || dayRange}
+            onVisibleRangeChange={setGanttVisibleRange}
+          />
+        </Lazy>
       ),
     },
     {
@@ -1284,7 +1432,7 @@ export default function App() {
         </span>
       ),
       children: (
-        <div>
+        <Lazy>
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи</Text>
           <HourlyLoadChart
             tasks={tasksDB}
@@ -1292,6 +1440,7 @@ export default function App() {
             selectedTaskTypes={filterTypes}
             isDark={isDark}
             roster={fullRoster}
+            qualOrder={qualOrder}
           />
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
@@ -1301,8 +1450,9 @@ export default function App() {
             selectedTaskTypes={filterTypes}
             isDark={isDark}
             roster={fullRoster}
+            qualOrder={qualOrder}
           />
-        </div>
+        </Lazy>
       ),
     },
     {
@@ -1311,24 +1461,27 @@ export default function App() {
         <span style={{ fontWeight: 600 }}>
           <TeamOutlined style={{ marginRight: 8 }} />
           Нехватка персонала
-          {backlogCount > 0 && <Badge count={backlogCount} style={{ marginLeft: 8 }} />}
+          {backlogBadge}
         </span>
       ),
       children: !gapOpen ? null : (
-        <StaffingGapPanel
-          tasks={tasksDB}
-          resolution={gapResolution}
-          staffDB={staffDB}
-          targetDate={selectedDate}
-          windowDates={windowDates}
-          windowStart={windowDates[0]}
-          windowDays={GANTT_WINDOW_DAYS}
-          fullRoster={fullRoster}
-          allShiftsByPerson={allShiftsByPerson}
-          distanceResolver={distanceResolver}
-          isDark={isDark}
-          onApply={handleApplyCallInPlan}
-        />
+        <Lazy>
+          <StaffingGapPanel
+            tasks={tasksDB}
+            resolution={gapResolution}
+            staffDB={staffDB}
+            targetDate={selectedDate}
+            windowDates={windowDates}
+            windowStart={windowDates[0]}
+            windowDays={GANTT_WINDOW_DAYS}
+            fullRoster={fullRoster}
+            allShiftsByPerson={allShiftsByPerson}
+            distanceResolver={distanceResolver}
+            isDark={isDark}
+            qualOrder={qualOrder}
+            onApply={handleApplyCallInPlan}
+          />
+        </Lazy>
       ),
     },
     {
@@ -1340,9 +1493,12 @@ export default function App() {
         </span>
       ),
       children: !strategicOpen ? null : !futureResolution ? (
-        <Text type="secondary">Считаю стратегический план…</Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Spin size="small" />
+          <Text type="secondary">Считаю стратегический план…</Text>
+        </div>
       ) : (
-        <div>
+        <Lazy>
           <Alert
             type="info"
             showIcon
@@ -1366,6 +1522,7 @@ export default function App() {
             selectedTaskTypes={filterTypes}
             isDark={isDark}
             roster={fullRoster}
+            qualOrder={qualOrder}
           />
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>
@@ -1377,6 +1534,7 @@ export default function App() {
             selectedTaskTypes={filterTypes}
             isDark={isDark}
             roster={fullRoster}
+            qualOrder={qualOrder}
           />
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Нехватка персонала и план вызова на подработку</Text>
@@ -1392,19 +1550,32 @@ export default function App() {
             allShiftsByPerson={allShiftsByPerson}
             distanceResolver={distanceResolver}
             isDark={isDark}
+            qualOrder={qualOrder}
           />
-        </div>
+        </Lazy>
       ),
     },
   ] : [];
 
   return (
     <ConfigProvider
+      locale={ru_RU}
       theme={{
         algorithm: isDark ? darkAlgorithm : defaultAlgorithm,
-        token: { colorPrimary: '#1677ff', borderRadius: 8 },
+        token: {
+          colorPrimary: isDark ? '#1668dc' : '#0958d9',
+          colorLink: isDark ? '#69b1ff' : '#0958d9',
+          borderRadius: 8,
+          // antd's default greys for secondary text, hints and placeholders are
+          // below the 4.5:1 contrast the text needs (3.35:1 and 1.83:1 on white).
+          colorTextSecondary: isDark ? '#b0b0b0' : '#595959',
+          colorTextDescription: mutedTxt,
+          colorTextTertiary: mutedTxt,
+          colorTextPlaceholder: isDark ? '#8c8c8c' : '#767676',
+        },
       }}
     >
+      {modalHolder}
       <Layout style={{ height: '100vh', background: contentBg }}>
         {/* Desktop Sidebar */}
         <Sider
@@ -1452,10 +1623,10 @@ export default function App() {
               )}
               <div>
                 <div style={{ color: '#fff', fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
-                  Глобальный пульт КК — Внуково
+                  Пульт КК — Внуково
                 </div>
                 {!mobileBroken && (
-                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, lineHeight: 1.2 }}>
+                  <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, lineHeight: 1.2 }}>
                     Оптимизация совмещения задач SV+GH
                   </div>
                 )}
@@ -1463,10 +1634,12 @@ export default function App() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              {hasData && selectedDate && !mobileBroken && (
+              {hasData && selectedDate && (
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, lineHeight: 1.1 }}>Дата</div>
-                  <div style={{ color: '#fff', fontWeight: 600, fontSize: 13, lineHeight: 1.1 }}>{selectedDate}</div>
+                  {!mobileBroken && <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, lineHeight: 1.1 }}>Дата</div>}
+                  <div style={{ color: '#fff', fontWeight: 600, fontSize: 13, lineHeight: 1.1 }} title={selectedDate}>
+                    {mobileBroken ? fmtDM(dayStart(selectedDate)) : selectedDate}
+                  </div>
                 </div>
               )}
               <Switch
@@ -1475,6 +1648,7 @@ export default function App() {
                 checked={isDark}
                 onChange={setIsDark}
                 title="Переключить тему"
+                aria-label="Тёмная тема"
               />
             </div>
           </Header>
@@ -1513,7 +1687,7 @@ export default function App() {
                       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
                         Загрузите данные для начала работы
                       </div>
-                      <div style={{ fontSize: 13, color: isDark ? '#666' : '#aaa' }}>
+                      <div style={{ fontSize: 13, color: mutedTxt }}>
                         Используйте кнопки на боковой панели
                       </div>
                     </div>
@@ -1524,17 +1698,44 @@ export default function App() {
 
             {hasData && !isLoading && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <MetricsSummary
-                  tasks={tasksDB}
-                  staffList={currentStaff}
-                  selectedDate={selectedDate}
-                  distanceResolver={distanceResolver}
-                />
-                <PlanReport
-                  isDark={isDark}
-                  quality={dataQuality}
-                  stats={planStats && planStats.selectedDate === selectedDate ? planStats : null}
-                />
+                {noShiftsToday && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={`На ${fmtDM(dayStart(selectedDate))} нет ни одной смены — распределять некому.`}
+                    description={nearestWithShifts
+                      ? `Ближайшая дата со сменами — ${fmtDM(dayStart(nearestWithShifts))} (${nearestWithShifts}).`
+                      : 'В загруженных данных вообще нет смен СПО.'}
+                    action={nearestWithShifts && (
+                      <Button size="small" type="primary" onClick={() => setSelectedDate(nearestWithShifts)}>
+                        Перейти на {fmtDM(dayStart(nearestWithShifts))}
+                      </Button>
+                    )}
+                  />
+                )}
+                {busy && (
+                  <div role="status" aria-live="polite">
+                    <Text strong>Идёт расчёт…</Text>
+                    <Progress percent={100} status="active" showInfo={false} size="small" />
+                  </div>
+                )}
+                {/* While a calculation runs the numbers below are about to change. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: busy ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+                  <MetricsSummary
+                    tasks={tasksDB}
+                    staffList={currentStaff}
+                    selectedDate={selectedDate}
+                    distanceResolver={distanceResolver}
+                    isDark={isDark}
+                    calculated={calculated}
+                    running={busy}
+                  />
+                  <PlanReport
+                    isDark={isDark}
+                    quality={dataQuality}
+                    stats={planStats && planStats.selectedDate === selectedDate ? planStats : null}
+                  />
+                </div>
                 <Collapse
                   items={collapseItems}
                   activeKey={openPanels}
@@ -1560,7 +1761,7 @@ export default function App() {
         {/* Conflict warning modal — shared by the backlog's select+button
             assignment and the Gantt chart's drag-and-drop assignment. */}
         <Modal
-          title={<span style={{ color: '#ff4d4f' }}>⚠️ Конфликт расписания</span>}
+          title={<span style={{ color: statusColor(isDark, 'danger') }}>⚠️ Конфликт расписания</span>}
           open={!!conflictInfo}
           onCancel={() => setConflictInfo(null)}
           footer={[
@@ -1588,7 +1789,7 @@ export default function App() {
               <ul style={{ marginTop: 4, paddingLeft: 16, marginBottom: 0 }}>
                 {conflictInfo?.conflicts.map(c => (
                   <li key={c.id}>
-                    <b>{c.name}</b> · {fmtTime(c.start)}–{fmtTime(c.end)} · рейс {c.flight}
+                    <b>{c.name}</b> · {fmtTime(c.start)}–{fmtTime(c.end)} · рейс <span title={c.flight}>{shortFlight(c.flight)}</span>
                   </li>
                 ))}
               </ul>

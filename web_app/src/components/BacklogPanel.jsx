@@ -1,27 +1,18 @@
 import { useState, useMemo } from 'react';
 import { Table, Select, Button, Empty, Tag, Space } from 'antd';
-import Plot from 'react-plotly.js';
+import Plot from './Plot';
 import { hasAllQuals, fitsShift } from '../optimizer';
-import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange } from '../utils/ganttAxis';
+import { ganttXAxisConfig, GANTT_LABEL_WIDTH, parseRelayoutXRange, axisTime } from '../utils/ganttAxis';
+import { fmtHM, dayStart } from '../utils/tz';
+import { makeQualColors, textOn } from '../utils/qualColors';
+import { shortFlight, flightWithFull } from '../utils/uiFormat';
 
-const QUAL_TAG_COLORS = ['blue', 'geekblue', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'green', 'cyan'];
-
-// Deterministic color per qualification code, since the corporate SPO_-prefixed
-// codes aren't a fixed 2-value set (SV/GH) — any number of distinct codes can
-// appear, so the color is derived from the string itself rather than hardcoded.
-function qualTagColor(qual) {
-  let hash = 0;
-  for (let i = 0; i < qual.length; i++) hash = (hash * 31 + qual.charCodeAt(i)) | 0;
-  return QUAL_TAG_COLORS[Math.abs(hash) % QUAL_TAG_COLORS.length];
-}
-
-function fmt(d) {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+const fmt = fmtHM;
 
 // Replicates GanttChart visual style for unassigned tasks
-function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, visibleRange, onVisibleRangeChange }) {
-  const dateObj = new Date(windowStart + 'T00:00:00');
+function BacklogGantt({ unassigned, qualOrder, windowStart, windowDays, isDark, visibleRange, onVisibleRangeChange }) {
+  const qc = useMemo(() => makeQualColors(qualOrder), [qualOrder]);
+  const dateObj = dayStart(windowStart);
   const nextDay  = new Date(dateObj.getTime() + windowDays * 24 * 3600000);
   const range = visibleRange || [dateObj.getTime(), nextDay.getTime()];
 
@@ -34,14 +25,15 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
       byName[t.name].push(t);
     }
 
+    const barLine = { color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)', width: 1 };
     const traces = Object.entries(byName).map(([name, list]) => {
-      const color = colorMap[name] || '#888';
+      const colors = list.map(t => qc.colorOf(qc.keyOf(t)));
       return {
         type: 'bar',
         orientation: 'h',
         name,
         x: list.map(t => t.end - t.start),
-        base: list.map(t => t.start.getTime()),
+        base: list.map(t => axisTime(t.start.getTime())),
         y: list.map(t => t.flight),
         text: list.map(t => {
           const mins = Math.round((t.end - t.start) / 60000);
@@ -49,10 +41,10 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
         }),
         textposition: 'inside',
         insidetextanchor: 'middle',
-        textfont: { size: 9, color: '#fff' },
+        textfont: { size: 9, color: colors.map(textOn) },
         customdata: list.map(t => ({
           desc:   t.name,
-          flight: t.flight,
+          flight: flightWithFull(t.flight),
           pos:    t.pos,
           qual:   t.reqType,
           start:  fmt(t.start),
@@ -65,7 +57,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
           'Время: %{customdata.start} – %{customdata.end}  (%{customdata.dur})<br>' +
           'Квалификация: %{customdata.qual}<br>' +
           '<extra>⚠ Не назначено</extra>',
-        marker: { color, opacity: 0.9 },
+        marker: { color: colors, opacity: 0.9, line: barLine },
       };
     });
 
@@ -75,7 +67,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
       rowLabels: flightSet, // top-down order, same as flightSet
       rowCount: flightSet.length,
     };
-  }, [unassigned, colorMap]);
+  }, [unassigned, qc, isDark]);
 
   const ROW_PX     = 26;
   const MARGIN_T   = 4;
@@ -157,7 +149,7 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
                 userSelect: 'none',
               }}
             >
-              {label}
+              {shortFlight(label)}
             </div>
           ))}
         </div>
@@ -207,10 +199,11 @@ function BacklogGantt({ unassigned, colorMap, windowStart, windowDays, isDark, v
 }
 
 export default function BacklogPanel({
-  tasks, staffList, windowDates, windowStart, windowDays, colorMap, onAssign, isDark,
+  tasks, staffList, windowDates, windowStart, windowDays, qualOrder, onAssign, isDark,
   onAssignAttempt, onDragTaskChange, visibleRange, onVisibleRangeChange,
 }) {
   const [selections, setSelections] = useState({});
+  const qc = useMemo(() => makeQualColors(qualOrder), [qualOrder]);
 
   const unassigned = useMemo(
     () => tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено'),
@@ -247,26 +240,24 @@ export default function BacklogPanel({
     },
     {
       title: 'Тип задачи',
+      dataIndex: 'name',
       key: 'name',
       filters: nameFilters,
       onFilter: (value, record) => record.name === value,
       filterSearch: true,
-      render: (_, t) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: colorMap[t.name] || '#888', display: 'inline-block', flexShrink: 0 }} />
-          {t.name}
-        </span>
-      ),
     },
     {
       title: 'Рейс / POS',
       key: 'flight',
       render: (_, t) => (
         <Space size={4}>
-          <span>{t.flight}</span>
+          <span title={t.flight}>{shortFlight(t.flight)}</span>
           <Tag size="small">{t.pos}</Tag>
           {(t.reqTypes && t.reqTypes.length > 0 ? t.reqTypes : [t.reqType]).map(q => (
-            <Tag key={q} color={qualTagColor(q)} size="small">{q}</Tag>
+            <Tag key={q} size="small">
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: qc.colorOf(q), display: 'inline-block', marginRight: 4, border: '1px solid rgba(128,128,128,.6)' }} />
+              {q}
+            </Tag>
           ))}
         </Space>
       ),
@@ -309,7 +300,7 @@ export default function BacklogPanel({
     <div>
       <BacklogGantt
         unassigned={unassigned}
-        colorMap={colorMap}
+        qualOrder={qualOrder}
         windowStart={windowStart}
         windowDays={windowDays}
         isDark={isDark}

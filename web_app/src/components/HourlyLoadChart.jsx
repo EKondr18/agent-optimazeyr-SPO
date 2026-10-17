@@ -1,8 +1,11 @@
-import Plot from 'react-plotly.js';
+import Plot from './Plot';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { Segmented } from 'antd';
 import { packIntoChannels, bucketizeChannels, GRANULARITY_OPTIONS } from '../utils/staffDemand';
-import { qualColor } from '../utils/qualColors';
+import { makeQualColors, legendItems, OTHER_COLOR, OTHER_LABEL } from '../utils/qualColors';
+import { fmtHM } from '../utils/tz';
+import { mutedColor } from '../utils/uiFormat';
+import QualLegend from './QualLegend';
 
 function hexToRgba(hex, alpha) {
   if (!hex || hex[0] !== '#' || hex.length < 7) return hex;
@@ -12,10 +15,11 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark, roster = [] }) {
+export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes, isDark, roster = [], qualOrder }) {
   const [granularity, setGranularity] = useState(60);
+  const qc = useMemo(() => makeQualColors(qualOrder), [qualOrder]);
 
-  const { traces, bucketCount } = useMemo(() => {
+  const { traces, bucketCount, legend } = useMemo(() => {
     const dayTasks = tasks.filter(
       t => t.date === selectedDate && selectedTaskTypes.includes(t.name)
     );
@@ -27,25 +31,34 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
     const channels = packIntoChannels(dayTasks, roster);
     const buckets = bucketizeChannels(channels, selectedDate, 1, granularity);
 
-    const xLabels = buckets.map(b => {
-      const h = String(b.start.getHours()).padStart(2, '0');
-      const m = String(b.start.getMinutes()).padStart(2, '0');
-      return `${h}:${m}`;
+    const xLabels = buckets.map(b => fmtHM(b.start));
+
+    // Codes beyond the palette are summed into one grey "Прочие" series.
+    const series = new Map(); // label -> per-bucket people
+    for (const q of new Set(buckets.flatMap(b => Object.keys(b.byQual)))) {
+      const label = qc.isOther(q) ? OTHER_LABEL : q;
+      const cur = series.get(label) || buckets.map(() => 0);
+      buckets.forEach((b, i) => { cur[i] += b.byQual[q] || 0; });
+      series.set(label, cur);
+    }
+    const sortedQuals = [...series.keys()].sort((a, b) => {
+      const sum = l => series.get(l).reduce((s, v) => s + v, 0);
+      return sum(b) - sum(a);
     });
 
-    const quals = [...new Set(buckets.flatMap(b => Object.keys(b.byQual)))];
-    const sortedQuals = quals.sort((a, b) => {
-      const sumA = buckets.reduce((s, bk) => s + (bk.byQual[a] || 0), 0);
-      const sumB = buckets.reduce((s, bk) => s + (bk.byQual[b] || 0), 0);
-      return sumB - sumA;
-    });
+    const taskCounts = new Map();
+    for (const t of dayTasks) {
+      const k = qc.keyOf(t);
+      taskCounts.set(k, (taskCounts.get(k) || 0) + 1);
+    }
+    const legend = legendItems(taskCounts, qc, qualOrder);
 
     const fontColor = isDark ? '#d4d4d4' : '#444';
 
     // No stackgroup — each trace fills from zero independently.
     // Sorted largest→smallest so biggest area renders at back, smaller ones visible on top.
     const areaTraces = sortedQuals.map(qual => {
-      const color = qualColor(qual);
+      const color = qual === OTHER_LABEL ? OTHER_COLOR : qc.colorOf(qual);
       return {
         type: 'scatter',
         mode: 'lines',
@@ -55,7 +68,7 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
         // null (not 0) at zero-demand buckets so hovermode:'x unified' omits
         // this trace from the tooltip there, instead of listing every
         // qualification with "0" at every bucket it isn't actually needed.
-        y: buckets.map(b => (b.byQual[qual] ? b.byQual[qual] : null)),
+        y: series.get(qual).map(v => (v ? v : null)),
         line: { color, width: 1.5 },
         fillcolor: hexToRgba(color, 0.55),
         hovertemplate: `<b>${qual}</b>: %{y} чел.<extra></extra>`,
@@ -77,8 +90,8 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
       hovertemplate: '<b>Нужно людей одновременно</b>: %{y}<extra></extra>',
     };
 
-    return { traces: [...areaTraces, reqTrace], bucketCount: buckets.length };
-  }, [tasks, selectedDate, selectedTaskTypes, isDark, roster, granularity]);
+    return { traces: [...areaTraces, reqTrace], bucketCount: buckets.length, legend };
+  }, [tasks, selectedDate, selectedTaskTypes, isDark, roster, granularity, qc, qualOrder]);
 
   const fontColor = isDark ? '#d4d4d4' : '#444';
   const gridColor = isDark ? '#2d2d2d' : '#e5e7eb';
@@ -114,7 +127,7 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
   return (
     <div ref={containerRef}>
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 12, color: fontColor }}>Гранулярность:</span>
+        <span style={{ fontSize: 12, color: mutedColor(isDark) }}>Гранулярность:</span>
         <Segmented
           size="small"
           value={granularity}
@@ -122,15 +135,16 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
           options={GRANULARITY_OPTIONS}
         />
       </div>
+      <QualLegend items={legend} isDark={isDark} />
       <div style={{ overflowX: 'auto' }}>
         <Plot
           data={traces}
           layout={{
             width: plotWidth,
-            height: 420,
+            height: 360,
             autosize: false,
             hovermode: 'x unified',
-            margin: { l: 55, r: 20, t: 15, b: 100 },
+            margin: { l: 55, r: 20, t: 15, b: 80 },
             xaxis: {
               title: { text: 'Время суток', standoff: 10, font: { color: fontColor } },
               tickangle: -45,
@@ -144,13 +158,7 @@ export default function HourlyLoadChart({ tasks, selectedDate, selectedTaskTypes
               rangemode: 'tozero',
               gridcolor: gridColor,
             },
-            legend: {
-              orientation: 'h',
-              y: -0.35,
-              yanchor: 'top',
-              font: { size: 11, color: fontColor },
-              title: { text: 'Квалификация', font: { color: fontColor } },
-            },
+            showlegend: false,
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: plotBg,
             hoverlabel: { font: { size: 12 }, namelength: -1 },

@@ -5,14 +5,11 @@
 //  • what the last optimizer run achieved and how far that is from the best
 //    possible (the lower bound on open tasks), plus the independent check.
 import { Collapse, Tag, Typography } from 'antd';
+import { fmtDMHM } from '../utils/tz';
 
 const { Text } = Typography;
 
-const pad = n => String(n).padStart(2, '0');
-const fmtDT = d => {
-  const x = new Date(d);
-  return `${pad(x.getDate())}.${pad(x.getMonth() + 1)} ${pad(x.getHours())}:${pad(x.getMinutes())}`;
-};
+const fmtDT = d => fmtDMHM(new Date(d));
 const sec = ms => `${(ms / 1000).toFixed(1)} с`;
 
 const VIOLATION_LABELS = {
@@ -108,6 +105,9 @@ function StatsBody({ s }) {
           ? <Tag color="green">нарушений нет</Tag>
           : <>
               <Tag color="red">{s.violations.length} нарушений у закреплённых вручную задач</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                (назначены принудительно; оптимизатор их не меняет и «Применить план» из-за них не отказывает){' '}
+              </Text>
               <List items={s.violations} limit={5} render={v => (
                 <span key={v.taskId + v.code}>{v.employee}: {VIOLATION_LABELS[v.code] || v.code}</span>
               )} />

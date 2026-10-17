@@ -1,3 +1,13 @@
+import { TZ_OFFSET_MS } from './tz.js';
+
+// Plotly shows numeric times in the BROWSER's timezone, but the shift day is
+// always Moscow. Times go to Plotly as timezone-less wall-clock strings in
+// Moscow time instead, which every browser draws the same way; everything
+// that is stored (ranges, task times) stays real milliseconds.
+export function axisTime(ms) {
+  return new Date(ms + TZ_OFFSET_MS).toISOString().replace('T', ' ').slice(0, 23);
+}
+
 // Shared x-axis config for every Gantt-style Plotly chart in the app (main
 // chart, backlog mini-chart). Both must use the exact same function — a
 // divergent copy is what caused their time rulers to render at different
@@ -28,7 +38,7 @@ export function ganttXAxisConfig(range, fontColor, gridColor, showLabels) {
   }
   return {
     type: 'date',
-    range,
+    range: [axisTime(range[0]), axisTime(range[1])],
     tickformat,
     dtick,
     gridcolor: gridColor,
@@ -44,13 +54,20 @@ export function ganttXAxisConfig(range, fontColor, gridColor, showLabels) {
 // line up on screen when shown one above the other.
 export const GANTT_LABEL_WIDTH = 220;
 
+// Inverse of axisTime: Plotly reports zoomed ranges as the same timezone-less
+// strings (or, rarely, as plain numbers).
+function fromAxisTime(v) {
+  if (typeof v === 'number') return v;
+  return Date.parse(String(v).trim().replace(' ', 'T') + 'Z') - TZ_OFFSET_MS;
+}
+
 // Reads a Plotly relayout event for an x-axis zoom/pan change. Returns:
 //   [startMs, endMs]  — the user zoomed/panned to this range
 //   null              — the user reset to autorange (e.g. double-click, Home button)
 //   undefined         — this event isn't an x-axis range change (ignore it)
 export function parseRelayoutXRange(ev) {
   if (ev['xaxis.range[0]'] !== undefined && ev['xaxis.range[1]'] !== undefined) {
-    return [new Date(ev['xaxis.range[0]']).getTime(), new Date(ev['xaxis.range[1]']).getTime()];
+    return [fromAxisTime(ev['xaxis.range[0]']), fromAxisTime(ev['xaxis.range[1]'])];
   }
   if (ev['xaxis.autorange']) return null;
   return undefined;

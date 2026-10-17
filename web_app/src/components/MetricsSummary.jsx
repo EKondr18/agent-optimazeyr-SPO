@@ -1,12 +1,20 @@
 import { useMemo } from 'react';
-import { Row, Col, Card, Statistic } from 'antd';
+import { Row, Col, Card, Statistic, Typography } from 'antd';
 import { getPosDistance } from '../utils/posDistance';
+import { mutedColor, statusColor } from '../utils/uiFormat';
 
-export default function MetricsSummary({ tasks, staffList, selectedDate, distanceResolver }) {
+// `calculated`: the optimizer has been run for this date. Before that nothing
+// is assigned and "Распределено 0 / Бэклог 609" would read like a failure
+// instead of "not done yet", so those tiles show a grey dash.
+export default function MetricsSummary({ tasks, staffList, selectedDate, distanceResolver, isDark = false, calculated = true, running = false }) {
   const dayTasks = tasks.filter(t => t.date === selectedDate);
   const assignedTasks = dayTasks.filter(t => t.employee !== 'Не назначено');
   const backlog = dayTasks.length - assignedTasks.length;
   const pct = dayTasks.length > 0 ? Math.round((assignedTasks.length / dayTasks.length) * 100) : 0;
+  const notCalculated = !calculated && assignedTasks.length === 0 && dayTasks.length > 0;
+  const ok = statusColor(isDark, 'success');
+  const warn = statusColor(isDark, 'warning');
+  const bad = statusColor(isDark, 'danger');
 
   // Quality metrics — computed from the final assignment, not the
   // optimizer's internal passes, so they apply the same way whether the
@@ -65,6 +73,8 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     return { avgLoad, maxLoad, overtimeCount, avgOvertimeMinutes, avgGap, hasRealDistance: !!distanceResolver };
   }, [assignedTasks, staffList, distanceResolver]);
 
+  const grey = { color: mutedColor(isDark) };
+  const DASH = '—';
   const tiles = [
     {
       title: 'Задач дня',
@@ -74,74 +84,81 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     },
     {
       title: 'Распределено',
-      value: assignedTasks.length,
-      suffix: ` (${pct}%)`,
+      value: notCalculated ? DASH : assignedTasks.length,
+      suffix: notCalculated ? undefined : ` (${pct}%)`,
       prefix: '✅',
-      valueStyle: { color: '#52c41a' },
+      valueStyle: notCalculated ? grey : { color: ok },
     },
     {
       title: 'Бэклог',
-      value: backlog,
+      value: notCalculated ? DASH : backlog,
       prefix: '⚠️',
-      valueStyle: { color: backlog > 0 ? '#ff4d4f' : '#52c41a' },
+      valueStyle: notCalculated ? grey : { color: backlog > 0 ? bad : ok },
     },
     {
       title: 'Доступно смены',
       value: staffList.length,
       prefix: '👥',
-      valueStyle: { color: '#1677ff' },
+      valueStyle: { color: statusColor(isDark, 'info') },
     },
     {
       title: 'Ср. нагрузка на чел.',
-      value: quality.avgLoad,
-      precision: 1,
+      value: notCalculated ? DASH : quality.avgLoad,
+      precision: notCalculated ? undefined : 1,
       prefix: '⚖️',
-      valueStyle: {},
+      valueStyle: notCalculated ? grey : {},
     },
     {
       title: 'Макс. нагрузка на 1 чел.',
-      value: quality.maxLoad,
+      value: notCalculated ? DASH : quality.maxLoad,
       prefix: '📈',
-      valueStyle: quality.maxLoad > 0 && quality.maxLoad > quality.avgLoad * 1.5 ? { color: '#faad14' } : {},
+      valueStyle: notCalculated ? grey : (quality.maxLoad > 0 && quality.maxLoad > quality.avgLoad * 1.5 ? { color: warn } : {}),
     },
     {
       title: 'Задержаны после смены',
-      value: quality.overtimeCount,
+      value: notCalculated ? DASH : quality.overtimeCount,
       prefix: '🕒',
-      valueStyle: { color: quality.overtimeCount > 0 ? '#faad14' : '#52c41a' },
+      valueStyle: notCalculated ? grey : { color: quality.overtimeCount > 0 ? warn : ok },
     },
     {
       title: 'Ср. переработка, мин',
-      value: quality.avgOvertimeMinutes != null ? quality.avgOvertimeMinutes : '—',
-      precision: quality.avgOvertimeMinutes != null ? 0 : undefined,
+      value: !notCalculated && quality.avgOvertimeMinutes != null ? quality.avgOvertimeMinutes : DASH,
+      precision: !notCalculated && quality.avgOvertimeMinutes != null ? 0 : undefined,
       prefix: '⏱️',
-      valueStyle: quality.avgOvertimeMinutes > 30 ? { color: '#ff4d4f' } : {},
+      valueStyle: notCalculated ? grey : (quality.avgOvertimeMinutes > 30 ? { color: bad } : {}),
     },
     {
       title: quality.hasRealDistance ? 'Ср. переход между задачами, м' : 'Ср. переход между задачами (усл. ед.)',
-      value: quality.avgGap != null ? quality.avgGap : '—',
-      precision: quality.avgGap != null ? 0 : undefined,
+      value: !notCalculated && quality.avgGap != null ? quality.avgGap : DASH,
+      precision: !notCalculated && quality.avgGap != null ? 0 : undefined,
       prefix: '🚶',
       valueStyle: {},
     },
   ];
 
   return (
-    <Row gutter={[12, 12]}>
-      {tiles.map(tile => (
-        <Col xs={12} sm={6} key={tile.title}>
-          <Card size="small" style={{ textAlign: 'center' }} styles={{ body: { padding: '12px 8px' } }}>
-            <Statistic
-              title={tile.title}
-              value={tile.value}
-              precision={tile.precision}
-              prefix={tile.prefix}
-              suffix={tile.suffix}
-              valueStyle={{ fontSize: 22, ...tile.valueStyle }}
-            />
-          </Card>
-        </Col>
-      ))}
-    </Row>
+    <div>
+      {notCalculated && !running && staffList.length > 0 && (
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+          Распределение ещё не рассчитано. Нажмите «Запустить оптимизатор» на боковой панели.
+        </Typography.Text>
+      )}
+      <Row gutter={[12, 12]}>
+        {tiles.map(tile => (
+          <Col xs={12} sm={6} key={tile.title}>
+            <Card size="small" style={{ textAlign: 'center' }} styles={{ body: { padding: '12px 8px' } }}>
+              <Statistic
+                title={tile.title}
+                value={tile.value}
+                precision={tile.precision}
+                prefix={tile.prefix}
+                suffix={tile.suffix}
+                valueStyle={{ fontSize: 22, ...tile.valueStyle }}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+    </div>
   );
 }
