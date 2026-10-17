@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+import { dayKey, daysBetween, TZ_OFFSET_MS } from './tz.js';
 export { getPosDistance } from './posDistance.js';
 
 const COLOR_PALETTE = [
@@ -7,6 +8,12 @@ const COLOR_PALETTE = [
 ];
 
 const TERMINAL_KEYWORDS = ['вокзал', 'терминал', 'посадка', 'baggage', 'регистрация', 'terminal'];
+
+// Wall-clock time without a zone is Moscow time (the operating timezone, see
+// tz.js), never the timezone of whatever process runs this code.
+function moscowWallClock(y, mo, d, h = 0, mi = 0, s = 0, ms = 0) {
+  return new Date(Date.UTC(y, mo, d, h, mi, s, ms) - TZ_OFFSET_MS);
+}
 
 function parseDateTime(s) {
   if (!s || !s.trim()) return null;
@@ -25,27 +32,29 @@ function parseDateTime(s) {
   if (year < 100) year = year < 50 ? 2000 + year : 1900 + year;
   const hours = parseInt(timeSplit[0], 10);
   const minutes = parseInt(timeSplit[1], 10);
-  return new Date(year, month, day, hours, minutes, 0, 0);
+  const d = moscowWallClock(year, month, day, hours, minutes);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function parseDateOnly(s) {
-  if (!s || !s.trim()) return null;
-  const str = s.trim();
-  const parts = str.split('.');
-  if (parts.length < 3) return null;
-  const day = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1;
-  let year = parseInt(parts[2], 10);
-  if (year < 100) year = year < 50 ? 2000 + year : 1900 + year;
-  return new Date(year, month, day);
-}
-
-function toYMD(d) {
-  if (!d) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+// A moment from an export field: ISO with a zone ("...Z", "+03:00") as is;
+// ISO date-time with NO zone is Moscow wall-clock time (not the process's);
+// anything unreadable (empty, "20.09.2026 10:00", NaN) gives null.
+const ZONELESS_ISO = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3})\d*)?)?$/;
+function parseInstant(v) {
+  if (!v) return null;
+  let d;
+  if (v instanceof Date) {
+    d = new Date(v.getTime());
+  } else if (typeof v === 'string') {
+    const str = v.trim();
+    const m = ZONELESS_ISO.exec(str);
+    d = m
+      ? moscowWallClock(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0), +((m[7] || '0').padEnd(3, '0')))
+      : new Date(str);
+  } else {
+    d = new Date(v);
+  }
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function inferQual(notes) {
@@ -106,7 +115,7 @@ export function parseCSV(csvText) {
     // Use start-time date (matches original Python app behaviour:
     // a task starting at 00:02 on May 4th belongs to May 4th even if
     // "Дата рейса" says May 3rd)
-    const taskDate = toYMD(start);
+    const taskDate = dayKey(start);
 
     // Zone
     const descLower = description.toLowerCase();
@@ -195,14 +204,8 @@ export function parseCSV(csvText) {
         shiftEnd: maxEnd,
       };
 
-      // Add to every date the shift spans
-      const cur = new Date(minStart);
-      cur.setHours(0, 0, 0, 0);
-      const endDay = new Date(maxEnd);
-      endDay.setHours(0, 0, 0, 0);
-
-      while (cur <= endDay) {
-        const dateKey = toYMD(cur);
+      // Add to every Moscow day the shift spans
+      for (const dateKey of daysBetween(dayKey(minStart), dayKey(maxEnd))) {
         if (!staffDB[dateKey]) staffDB[dateKey] = [];
         // Avoid duplicate (same name on same date from same shift window)
         const exists = staffDB[dateKey].some(s =>
@@ -210,7 +213,6 @@ export function parseCSV(csvText) {
           s.shiftStart.getTime() === minStart.getTime()
         );
         if (!exists) staffDB[dateKey].push(staffMember);
-        cur.setDate(cur.getDate() + 1);
       }
     }
   }
@@ -341,18 +343,40 @@ function buildShiftQualMap(shiftQualifications, qualDict) {
   return map;
 }
 
+// "1 481" — a thousands separator that survives any locale/ICU build.
+const fmtN = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+// req_qual_vector arrives as an array (JSON) or as one cell (CSV: a scalar,
+// comma/semicolon-joined when a task carries more than one qualification). A
+// string in the JSON path used to turn into "no requirement" — which lets
+// anyone take the task — so both paths split it the same way.
+function qualVector(v) {
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (v == null || v === '') return [];
+  return String(v).split(/[,;]/).map(x => x.trim()).filter(Boolean);
+}
+
 function parseOrders(orders) {
   const colorIndex = {};
   let colorCounter = 0;
   const tasks = [];
+  const seen = new Set();
+  const skipped = { badDates: 0, duplicateIds: 0, noId: 0 };
 
   for (const o of orders || []) {
-    const start = o.start_time ? new Date(o.start_time) : null;
-    const end = o.end_time ? new Date(o.end_time) : null;
-    if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+    const start = parseInstant(o.start_time);
+    const end = parseInstant(o.end_time);
+    // An unreadable moment or an interval that does not run forward cannot be
+    // planned (a "zombie" task: nothing fits it, nothing conflicts with it).
+    if (!start || !end || !(end.getTime() > start.getTime())) { skipped.badDates++; continue; }
+    // First occurrence of an id stays; the same id again is a repeated row.
+    const idKey = o._id == null ? '' : String(o._id).trim();
+    if (idKey === '') { skipped.noId++; continue; }
+    if (seen.has(idKey)) { skipped.duplicateIds++; continue; }
+    seen.add(idKey);
 
     const name = o.flight_event_ref || o.order_rule_ref || 'Задача';
-    const reqTypes = Array.isArray(o.req_qual_vector) ? o.req_qual_vector.filter(Boolean) : [];
+    const reqTypes = qualVector(o.req_qual_vector);
     const reqType = reqTypes.join(' + ');
     // A task can have up to 4 location segments — entry (setup, high
     // priority) falling back to start, and exit (clearup, high priority)
@@ -384,7 +408,7 @@ function parseOrders(orders) {
 
     tasks.push({
       id: o._id,
-      date: toYMD(start),
+      date: dayKey(start),
       name,
       flight,
       pos,
@@ -407,28 +431,35 @@ function parseOrders(orders) {
     });
   }
 
-  return tasks;
+  const total = (orders || []).length;
+  return { tasks, report: { total, used: tasks.length, skipped } };
 }
 
 function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
   const staffDB = {};
+  const skipped = { noResource: 0, otherDepartment: 0, cancelled: 0, badDates: 0 };
+  let used = 0;
+  let badIntervals = 0;
 
   for (const s of shifts || []) {
     const resource = resourceMap.get(String(s.resource_ref));
-    if (!resource) continue;
+    if (!resource) { skipped.noResource++; continue; }
     // A cancelled shift is not capacity.
-    if (String(s.shift_state_ref || '').toUpperCase() === 'CANCELED') continue;
+    if (String(s.shift_state_ref || '').toUpperCase() === 'CANCELED') { skipped.cancelled++; continue; }
     // The shift says which department the person works for that day: an SPO
     // employee on an audit shift is not in the SPO pool, someone lent from
     // another department onto an SPO shift is. The home department only
     // decides when the shift itself doesn't say (empty or '*'). Confirmed
     // against the full tb_shifts export: both mismatches occur.
     const shiftDept = s.department_ref && s.department_ref !== '*' ? s.department_ref : null;
-    if ((shiftDept ?? resource.default_department_ref) !== 'SPO') continue;
+    if ((shiftDept ?? resource.default_department_ref) !== 'SPO') { skipped.otherDepartment++; continue; }
 
-    const shiftStart = s.scheduled_start ? new Date(s.scheduled_start) : null;
-    const shiftEnd = s.scheduled_end ? new Date(s.scheduled_end) : null;
-    if (!shiftStart || !shiftEnd) continue;
+    const shiftStart = parseInstant(s.scheduled_start);
+    const shiftEnd = parseInstant(s.scheduled_end);
+    if (!shiftStart || !shiftEnd) { skipped.badDates++; continue; }
+    used++;
+    // Kept as recorded (nothing fits it), but counted so it is visible.
+    if (!(shiftEnd.getTime() > shiftStart.getTime())) badIntervals++;
 
     // Union of personal quals and quals recorded for this specific shift instance.
     const qualSet = new Set([
@@ -451,23 +482,19 @@ function parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap) {
       basePos: s.location_ref || s.default_location_ref || null,
     };
 
-    const cur = new Date(shiftStart);
-    cur.setHours(0, 0, 0, 0);
-    const endDay = new Date(shiftEnd);
-    endDay.setHours(0, 0, 0, 0);
-
-    while (cur <= endDay) {
-      const dateKey = toYMD(cur);
+    // The shift belongs to every Moscow day it overlaps (a night shift to
+    // both), whatever the timezone of the process.
+    for (const dateKey of daysBetween(dayKey(shiftStart), dayKey(shiftEnd))) {
       if (!staffDB[dateKey]) staffDB[dateKey] = [];
       const exists = staffDB[dateKey].some(m =>
         m.name === staffMember.name && m.shiftStart.getTime() === shiftStart.getTime()
       );
       if (!exists) staffDB[dateKey].push(staffMember);
-      cur.setDate(cur.getDate() + 1);
     }
   }
 
-  return staffDB;
+  const total = (shifts || []).length;
+  return { staffDB, report: { total, used, skipped, badIntervals } };
 }
 
 // Every SPO resource with their own held qualifications (tb_relation_resource_
@@ -484,6 +511,120 @@ function buildFullRoster(resources, resourceQualMap) {
     }));
 }
 
+// ── File schema ─────────────────────────────────────────────────────────────
+// What each of the 6 files must carry, by what the code above reads. A file
+// loaded into the wrong slot (shifts in three slots, res_qual swapped with
+// resource_qualification...) used to load "fine" and produce a plan on junk;
+// now it is refused with a message that says which columns are missing.
+// An entry that is an array means "any one of these".
+const SCHEMAS = {
+  orders: { label: 'tb_sub_orders', need: ['_id', 'start_time', 'end_time', 'req_qual_vector'], empty: 'задач нет' },
+  shifts: { label: 'tb_shifts', need: ['_id', 'resource_ref', 'scheduled_start', 'scheduled_end'], empty: 'смен нет, назначать некого' },
+  resources: {
+    label: 'tb_resources',
+    need: ['internal_id', 'default_department_ref', ['name', 'additional_name']],
+    empty: 'ни одна смена не будет учтена: сотрудников нет в справочнике',
+  },
+  resQual: {
+    label: 'tb_res_qual',
+    need: ['name', ['_id', 'internal_id']],
+    // columns of other tables: tb_resources also has name/_id/internal_id
+    foreign: ['default_department_ref', 'qualification_ref', 'resource_ref', 'shift_ref'],
+    empty: 'справочник допусков пуст: допуски останутся «сырыми» ссылками, а не кодами',
+  },
+  resourceQualifications: {
+    label: 'tb_relation_resource_qualification',
+    need: ['resource_ref', 'qualification_ref'],
+    empty: 'личных допусков у сотрудников нет',
+  },
+  shiftQualifications: {
+    label: 'tb_relation_shift_qualification',
+    need: ['shift_ref', 'qualification_ref'],
+    empty: 'допусков, записанных на смены, нет',
+  },
+};
+const SLOT_KEYS = Object.keys(SCHEMAS);
+
+const missingColumns = (schema, cols) =>
+  schema.need.filter(n => (Array.isArray(n) ? !n.some(c => cols.has(c)) : !cols.has(n)))
+    .map(n => (Array.isArray(n) ? n.join(' или ') : n));
+const foreignColumns = (schema, cols) => (schema.foreign || []).filter(c => cols.has(c));
+
+function checkSchema(key, cols) {
+  const schema = SCHEMAS[key];
+  const missing = missingColumns(schema, cols);
+  const foreign = foreignColumns(schema, cols);
+  if (missing.length === 0 && foreign.length === 0) return;
+  const lines = [];
+  if (missing.length > 0) lines.push(`нет колонок ${missing.join(', ')}`);
+  if (foreign.length > 0) lines.push(`есть колонки другой таблицы (${foreign.join(', ')})`);
+  const other = SLOT_KEYS.find(k => k !== key && missingColumns(SCHEMAS[k], cols).length === 0 && foreignColumns(SCHEMAS[k], cols).length === 0);
+  throw new Error(
+    `Файл «${schema.label}»: ${lines.join('; ')} — похоже, загружен не тот файл` +
+    (other ? ` (по колонкам это «${SCHEMAS[other].label}»)` : '')
+  );
+}
+
+// JSON rows may omit null fields, so a column counts as present when any row
+// has it. Stops reading as soon as every needed column is found.
+function jsonColumns(rows, key) {
+  const wanted = new Set(SCHEMAS[key].need.flat().concat(SCHEMAS[key].foreign || []));
+  const cols = new Set();
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue;
+    for (const c of Object.keys(r)) cols.add(c.trim());
+    if ([...wanted].every(c => cols.has(c))) break;
+  }
+  return cols;
+}
+
+// Shared by the JSON and CSV entry points: rows are already schema-checked.
+function buildFromRows(rows, warnings) {
+  for (const key of SLOT_KEYS) {
+    if (rows[key].length === 0) warnings.push(`Файл «${SCHEMAS[key].label}» пуст — ${SCHEMAS[key].empty}`);
+  }
+
+  const resourceMap = buildResourceMap(rows.resources);
+  const qualDict = buildQualDict(rows.resQual);
+  const resourceQualMap = buildResourceQualMap(rows.resourceQualifications, qualDict);
+  const shiftQualMap = buildShiftQualMap(rows.shiftQualifications, qualDict);
+
+  const { tasks, report: ordersReport } = parseOrders(rows.orders);
+  const { staffDB, report: shiftsReport } = parseShifts(rows.shifts, resourceMap, resourceQualMap, shiftQualMap);
+  const fullRoster = buildFullRoster(rows.resources, resourceQualMap);
+
+  const colorMap = {};
+  for (const t of tasks) colorMap[t.name] = t.color;
+
+  const so = ordersReport.skipped;
+  const orderSkipped = so.badDates + so.duplicateIds + so.noId;
+  if (orderSkipped > 0) {
+    const parts = [];
+    if (so.badDates > 0) parts.push(`нечитаемая дата или конец не позже начала — ${fmtN(so.badDates)}`);
+    if (so.duplicateIds > 0) parts.push(`повтор id — ${fmtN(so.duplicateIds)}`);
+    if (so.noId > 0) parts.push(`нет id — ${fmtN(so.noId)}`);
+    warnings.push(`Пропущено ${fmtN(orderSkipped)} из ${fmtN(ordersReport.total)} задач: ${parts.join(', ')}`);
+  }
+  const ss = shiftsReport.skipped;
+  const shiftSkipped = ss.noResource + ss.otherDepartment + ss.cancelled + ss.badDates;
+  if (shiftSkipped > 0) {
+    const parts = [];
+    if (ss.otherDepartment > 0) parts.push(`чужой отдел — ${fmtN(ss.otherDepartment)}`);
+    if (ss.cancelled > 0) parts.push(`отменены — ${fmtN(ss.cancelled)}`);
+    if (ss.noResource > 0) parts.push(`ресурса нет в справочнике — ${fmtN(ss.noResource)}`);
+    if (ss.badDates > 0) parts.push(`нечитаемая дата — ${fmtN(ss.badDates)}`);
+    warnings.push(`Пропущено ${fmtN(shiftSkipped)} из ${fmtN(shiftsReport.total)} смен: ${parts.join(', ')}`);
+  }
+  if (shiftsReport.badIntervals > 0) {
+    warnings.push(`Смен, где конец не позже начала: ${fmtN(shiftsReport.badIntervals)} — они никого не покрывают`);
+  }
+  if (shiftsReport.total > 0 && shiftsReport.used === 0) {
+    warnings.push('Ни одна смена не попала в расчёт — проверьте файлы смен и ресурсов');
+  }
+
+  return { tasks, staffDB, colorMap, fullRoster, loadReport: { orders: ordersReport, shifts: shiftsReport, warnings } };
+}
+
 export function parseJsonExport({
   orders,
   shifts,
@@ -492,19 +633,13 @@ export function parseJsonExport({
   resourceQualifications,
   shiftQualifications,
 }) {
-  const resourceMap = buildResourceMap(resources);
-  const qualDict = buildQualDict(resQual);
-  const resourceQualMap = buildResourceQualMap(resourceQualifications, qualDict);
-  const shiftQualMap = buildShiftQualMap(shiftQualifications, qualDict);
-
-  const tasks = parseOrders(orders);
-  const staffDB = parseShifts(shifts, resourceMap, resourceQualMap, shiftQualMap);
-  const fullRoster = buildFullRoster(resources, resourceQualMap);
-
-  const colorMap = {};
-  for (const t of tasks) colorMap[t.name] = t.color;
-
-  return { tasks, staffDB, colorMap, fullRoster };
+  const given = { orders, shifts, resources, resQual, resourceQualifications, shiftQualifications };
+  const rows = {};
+  for (const key of SLOT_KEYS) {
+    rows[key] = Array.isArray(given[key]) ? given[key] : [];
+    if (rows[key].length > 0) checkSchema(key, jsonColumns(rows[key], key));
+  }
+  return buildFromRows(rows, []);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -517,22 +652,20 @@ export function parseJsonExport({
 // expects, with one flattening quirk to undo: req_qual_vector is a JSON
 // array in the source data, but CSV can't hold an array in one cell, so it
 // arrives as a single scalar column (comma/semicolon-joined if the export
-// ever carries more than one qualification for a task).
+// ever carries more than one qualification for a task) — see qualVector.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function csvTextToRows(text) {
-  if (!text || !text.trim()) return [];
-  const result = Papa.parse(text.trim(), { header: true, skipEmptyLines: true });
-  return result.data;
-}
-
-function coerceOrderRowsFromCsv(rows) {
-  return rows.map(r => ({
-    ...r,
-    req_qual_vector: r.req_qual_vector
-      ? String(r.req_qual_vector).split(/[,;]/).map(s => s.trim()).filter(Boolean)
-      : [],
-  }));
+// Rows plus the header's column names (a header-only file still has columns
+// to check). Header cells are trimmed: a real export carries " time_fixate",
+// and a stray space on "_id " used to leave every task without an id.
+function csvTextToTable(text) {
+  if (!text || !text.trim()) return { rows: [], fields: [] };
+  const result = Papa.parse(text.replace(/^﻿/, '').trim(), {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: h => h.trim(),
+  });
+  return { rows: result.data, fields: result.meta.fields || [] };
 }
 
 export function parseCsvCollections({
@@ -543,12 +676,19 @@ export function parseCsvCollections({
   resourceQualificationsCsv,
   shiftQualificationsCsv,
 }) {
-  return parseJsonExport({
-    orders: coerceOrderRowsFromCsv(csvTextToRows(ordersCsv)),
-    shifts: csvTextToRows(shiftsCsv),
-    resources: csvTextToRows(resourcesCsv),
-    resQual: csvTextToRows(resQualCsv),
-    resourceQualifications: csvTextToRows(resourceQualificationsCsv),
-    shiftQualifications: csvTextToRows(shiftQualificationsCsv),
-  });
+  const given = {
+    orders: ordersCsv,
+    shifts: shiftsCsv,
+    resources: resourcesCsv,
+    resQual: resQualCsv,
+    resourceQualifications: resourceQualificationsCsv,
+    shiftQualifications: shiftQualificationsCsv,
+  };
+  const rows = {};
+  for (const key of SLOT_KEYS) {
+    const table = csvTextToTable(given[key]);
+    rows[key] = table.rows;
+    if (table.fields.length > 0) checkSchema(key, new Set(table.fields));
+  }
+  return buildFromRows(rows, []);
 }

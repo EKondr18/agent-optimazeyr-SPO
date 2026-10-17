@@ -19,7 +19,7 @@
 #   1. generate  — Run agent.py to produce the React source in web_app/
 #                  (skipped automatically if web_app/package.json already exists
 #                   and force_regenerate != "true")
-#   2. build     — npm install + npm run build
+#   2. build     — npm ci + npm test + npm run build
 #   3. deploy    — Push dist/ to GitHub Pages
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -39,8 +39,14 @@ on:
 
   workflow_dispatch:
     inputs:
+      # WARNING (decision pending with the repository owner): with "true" the
+      # `generate` job runs agent.py, which REWRITES the hand-written web_app/
+      # (optimizer, App, dataParser, package.json ...) and then commits and
+      # pushes the result to the current branch (see the "Commit generated
+      # source" step; needs `contents: write` below). If that branch is `main`,
+      # Vercel publishes it to production. Do not run it from `main`.
       force_regenerate:
-        description: "Force full regeneration via Claude AI (requires ANTHROPIC_API_KEY secret)"
+        description: "DANGER: overwrites web_app/ with generated code and pushes it (requires ANTHROPIC_API_KEY secret)"
         required: false
         default: "false"
         type: choice
@@ -171,16 +177,18 @@ jobs:
           name: "web-app-source-${{ github.run_id }}"
           path: "web_app/"
 
-      - name: "Set up Node.js 20"
+      - name: "Set up Node.js 22"
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
-          cache-dependency-path: "web_app/package.json"
+          cache-dependency-path: "web_app/package-lock.json"
 
+      # npm ci installs exactly what package-lock.json says (and fails if the
+      # lock and package.json disagree), so a build is reproducible.
       - name: "Install Node dependencies"
         working-directory: web_app
-        run: npm install
+        run: npm ci
 
       - name: "Run optimizer tests"
         working-directory: web_app

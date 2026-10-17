@@ -1,0 +1,117 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .github/workflows/ci.yml
+#
+# SPO Optimizer — checks on every change, NO deployment.
+#
+# Runs on pull requests and on pushes to every branch except `main` (what
+# reaches `main` is built and published by main.yml). Nothing here writes to
+# the repository, publishes anything or uses a secret.
+#
+# What is checked
+#   test   npm test under three process timezones (UTC, Europe/Moscow,
+#          America/Los_Angeles): a "shift day" is always the Moscow day, so
+#          every result must be the same whatever the machine's clock zone is.
+#   build  npm run build (the Vercel-style build, base path "/").
+#
+# Reproduce locally (from the repository root):
+#   cd web_app && npm ci
+#   for tz in UTC Europe/Moscow America/Los_Angeles; do TZ=$tz npm test; done
+#   npm run build
+#
+# To make these checks block a merge, the repository owner marks the jobs
+# "test (TZ=UTC)", "test (TZ=Europe/Moscow)", "test (TZ=America/Los_Angeles)"
+# and "build" as required status checks for `main` (see docs/process.md).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "CI"
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - "main"
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an older, still running check
+# pointless. The event name is part of the group so the check of a pull
+# request is never cancelled by the check of the push that created it.
+concurrency:
+  group: "ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: "test (TZ=${{ matrix.tz }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: ["UTC", "Europe/Moscow", "America/Los_Angeles"]
+    defaults:
+      run:
+        working-directory: web_app
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Set up Node.js 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "web_app/package-lock.json"
+
+      - name: "Install dependencies (exactly as locked)"
+        run: npm ci
+
+      - name: "Run tests"
+        env:
+          TZ: ${{ matrix.tz }}
+        run: npm test
+
+  build:
+    name: "build"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web_app
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Real exports hold employee data and must never be committed.
+      - name: "No data exports in the repository"
+        working-directory: .
+        run: |
+          found=$(git ls-files | grep -Ei '\.(csv|xlsx?|xlsm)$' || true)
+          if [ -n "$found" ]; then
+            echo "::error::Data files are tracked by git (exports must stay outside the repository):"
+            echo "$found"
+            exit 1
+          fi
+
+      - name: "Set up Node.js 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "web_app/package-lock.json"
+
+      - name: "Install dependencies (exactly as locked)"
+        run: npm ci
+
+      - name: "Build production bundle"
+        run: npm run build
+
+      - name: "Show build output summary"
+        run: |
+          du -sh dist/
+          find dist/ -type f | sort
