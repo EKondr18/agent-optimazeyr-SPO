@@ -248,7 +248,8 @@ test('batch update: corrections inside the frozen hour are applied and repaired,
     assert.deepEqual(validatePlan(out.tasks, staff, DATE, null, WIN), []);
     for (const c of changes) assert.equal(out.tasks.find(t => t.id === c.id).start.getTime(), c.start.getTime());
     // inside the frozen hour, only tasks that the corrections actually broke may move
-    const repaired = new Set(out.repairs.map(r => r.taskId));
+    // (not the ones a displacement chain pushed aside to make room for them)
+    const repaired = new Set(out.repairs.filter(r => !r.viaBump).map(r => r.taskId));
     for (const t of base) {
       if (t.start < now || t.start >= D(11) || changes.some(c => c.id === t.id) || repaired.has(t.id)) continue;
       const after = out.tasks.find(x => x.id === t.id);

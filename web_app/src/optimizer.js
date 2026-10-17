@@ -376,6 +376,58 @@ function getNextTaskEntryPos(empTasks, afterTime) {
   return next.length > 0 ? (next[0].entryPos ?? next[0].pos) : null;
 }
 
+// ── Tasks of the neighbouring days that still occupy a person ───────────────
+// The planning window is a set of calendar dates, but work does not stop at
+// midnight: a task assigned to someone and dated outside the window (a locked
+// one running past 00:00, or just the day before/after being planned next) keeps
+// that person busy at the window's edge. Looked at only through `date`, the
+// search handed the same person an overlapping or unreachable task, and planning
+// day D and then day D+1 left conflicts exactly at their join.
+// Such a task is CONTEXT when its employee is in the window's shift pool and its
+// time comes within a margin of the window's time span: the longest walk any
+// hand-off can need plus the longest task, never less than six hours. Context
+// takes part in every conflict test (it sits in the person's list), is never
+// moved and never reported as changed, and stays out of the window's load and
+// overtime figures — only the hand-offs next to it at the edge count in the
+// walking cost, because those are real.
+const CONTEXT_MIN_MARGIN_MS = 6 * 3600000;
+function windowContext(tasks, dates, staff, resolver) {
+  const win = [];
+  let from = Infinity, to = -Infinity;
+  for (const t of tasks) {
+    if (!dates.includes(t.date)) continue;
+    win.push(t);
+    const s = t.start.getTime(), e = t.end.getTime();
+    if (s < from) from = s;
+    if (e > to) to = e;
+  }
+  const list = [];
+  if (win.length > 0 && staff.length > 0) {
+    const b = conflictBounds(win, resolver);
+    const margin = Math.max(CONTEXT_MIN_MARGIN_MS, b.longMs + b.after);
+    const pool = new Set(staff.map(s => s.name));
+    for (const t of tasks) {
+      if (t.employee === OPEN_EMPLOYEE || !pool.has(t.employee) || dates.includes(t.date)) continue;
+      // (a NaN time fails both tests: an unreadable task is not context)
+      if (t.end.getTime() > from - margin && t.start.getTime() < to + margin) list.push(t);
+    }
+  }
+  const set = new Set(list);
+  const counts = new Map();
+  for (const t of list) counts.set(t.employee, (counts.get(t.employee) ?? 0) + 1);
+  return {
+    win, tasks: list, size: list.length,
+    // the tasks conflict bounds must cover: the window's and its context
+    span: list.length > 0 ? win.concat(list) : win,
+    has: t => set.has(t),
+    count: name => counts.get(name) ?? 0,
+    // tasks of the window in `list` (an employee's tasks, context included)
+    load: (name, l) => l.length - (counts.get(name) ?? 0),
+  };
+}
+// What a caller without any context sees (every list is all window).
+const NO_CONTEXT = { size: 0, has: () => false, count: () => 0, load: (name, l) => l.length };
+
 function posDist(posA, posB, resolver) {
   const meters = resolver ? metersOf(resolver, posA, posB) : null;
   if (meters != null) return meters;
@@ -396,7 +448,7 @@ function posDist(posA, posB, resolver) {
 // scheduled), the shift's own base location (staff.basePos) stands in as
 // the virtual predecessor — the same reference point the spec uses for a
 // shift's very first task, not a special case needing separate handling.
-function scoreEmployee(staff, assignedTasks, task, resolver) {
+function scoreEmployee(staff, assignedTasks, task, resolver, ctx = NO_CONTEXT) {
   const empTasks = assignedTasks[staff.name] || [];
   const lastExitPos = getLastTaskExitPos(empTasks, task.start) ?? staff.basePos ?? null;
   const nextEntryPos = getNextTaskEntryPos(empTasks, task.end);
@@ -420,7 +472,7 @@ function scoreEmployee(staff, assignedTasks, task, resolver) {
   } else {
     dist = 10;
   }
-  return { dist, load: empTasks.length };
+  return { dist, load: ctx.load(staff.name, empTasks) };
 }
 
 // id -> position in `list`, FIRST occurrence only: that is what the findIndex it
@@ -490,7 +542,7 @@ function conflictsInWindow(list, task, resolver, bounds) {
   for (const x of list) {
     const xs = x.start.getTime(), xe = x.end.getTime();
     const far = xs >= te + bounds.after || xe + bounds.after <= ts;
-    if (!far || xe - xs > bounds.longMs) {
+    if (!far || xe - xs > bounds.longMs || bounds.transitive === false) {
       if (conflictsWith(x, task, resolver)) out.push(x);
     } else if (resolver) {
       if (xs >= te) { if (!after || xs < after.start.getTime()) after = x; }
@@ -532,10 +584,11 @@ function chainSearch(task, staffByLoad, assigned, over, resolver, visited, isBum
   const only = budget.eligibleNames ? budget.eligibleNames(task) : null;
   const listOf = (ov, name) => (ov.has(name) ? ov.get(name) : assigned[name] || []);
   const withList = (ov, name, list) => new Map(ov).set(name, list);
-  for (const s of staffByLoad) {
-    if (only && !only.has(s.name)) continue;
-    if (visited.has(s.name)) continue;
-    if (!canTake(s, task, resolver)) continue;
+
+  // One person as the place for `task`. A branch result, or false = this person
+  // does not work out (try the next), or null = the node budget is spent and the
+  // whole search stops.
+  const attempt = s => {
     if (trace) trace.names.add(s.name);
 
     const empTasks = listOf(over, s.name);
@@ -546,8 +599,8 @@ function chainSearch(task, staffByLoad, assigned, over, resolver, visited, isBum
     if (conflicts.length === 0) {
       return { over: withList(over, s.name, [...empTasks, task]), migrations: [{ task, to: s.name }] };
     }
-    if (depth >= CHAIN_MAX_DEPTH) continue;
-    if (conflicts.some(ct => !isBumpable(ct))) continue;
+    if (depth >= CHAIN_MAX_DEPTH) return false;
+    if (conflicts.some(ct => !isBumpable(ct))) return false;
     if (budget.left <= 0) return null;
     budget.left--;
 
@@ -568,6 +621,32 @@ function chainSearch(task, staffByLoad, assigned, over, resolver, visited, isBum
       chainMigrations.push({ task, to: s.name });
       return { over: working, migrations: chainMigrations };
     }
+    return false;
+  };
+
+  // People whose shift holds the task on the clock go first, in the order given
+  // (least loaded first). Those who could only take it by staying past the end of
+  // the shift, within the policy's overtime allowance (as the construction's last
+  // pass and the validator allow), are the fallback: the plan's cost charges for
+  // that overtime, and a chain that needs it beats leaving the task open.
+  const overtimeOnly = [];
+  for (const s of staffByLoad) {
+    if (only && !only.has(s.name)) continue;
+    if (visited.has(s.name)) continue;
+    if (!hasAllQuals(s.quals, task)) continue;
+    if (!fitsShift(s, task, resolver)) {
+      if (fitsShift(s, task, resolver, true)) overtimeOnly.push(s);
+      continue;
+    }
+    const r = attempt(s);
+    if (r === null) return null;
+    if (r) return r;
+  }
+  for (const s of overtimeOnly) {
+    if (visited.has(s.name)) continue;
+    const r = attempt(s);
+    if (r === null) return null;
+    if (r) return r;
   }
   return null;
 }
@@ -582,17 +661,24 @@ function chainSearch(task, staffByLoad, assigned, over, resolver, visited, isBum
 // [scopeStart, scopeEnd) exactly as it was. Same scoring/fallback logic
 // runOptimizer's own passes use, just applied to a single task instead of
 // the whole pool.
-export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDates, scopeStart, scopeEnd) {
+//
+// options.frozenBefore (Date): a displacement chain may only move tasks that
+// start at or after it (and before scopeEnd). The tasks the loop below moves
+// because they are themselves broken are a different matter and need no
+// permission: a task broken by an edit is repaired even inside the frozen hour,
+// but making room for it must not reshuffle other people's work there.
+export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDates, scopeStart, scopeEnd, options = {}) {
   const result = tasks.map(t => ({ ...t }));
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return { tasks: result, changes: [] };
   const index = indexFirstById(result);
+  const ctx = windowContext(result, dates, staff, resolver);
 
   let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
   for (const t of result) {
-    if (dates.includes(t.date) && t.employee !== 'Не назначено') {
+    if ((dates.includes(t.date) || ctx.has(t)) && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
       assignedTasks[t.employee].push(t);
     }
@@ -600,6 +686,10 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
 
   const inScope = t =>
     dates.includes(t.date) && !t.isLocked && t.start >= scopeStart && t.start < scopeEnd;
+  // Displaceable by a chain: in scope AND not frozen. The window test matters
+  // since the other days' tasks sit in the lists as context.
+  const bumpFrom = options.frozenBefore && options.frozenBefore > scopeStart ? options.frozenBefore : scopeStart;
+  const isBumpable = t => inScope(t) && t.start >= bumpFrom;
   const changes = [];
 
   for (const task of result) {
@@ -617,7 +707,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
       if (s.name === currentEmp) continue;
       if (!canTake(s, task, resolver)) continue;
       if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-      const score = scoreEmployee(s, assignedTasks, task, resolver);
+      const score = scoreEmployee(s, assignedTasks, task, resolver, ctx);
       if (!bestScore || score.load < bestScore.load ||
           (score.load === bestScore.load && score.dist < bestScore.dist)) {
         bestScore = score; bestStaff = s;
@@ -632,12 +722,9 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
     let viaChain = false;
     if (!bestStaff) {
       const staffByLoad = [...staff].sort(
-        (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
+        (a, b) => ctx.load(a.name, assignedTasks[a.name] || []) - ctx.load(b.name, assignedTasks[b.name] || [])
       );
-      const chain = findChainPlacement(
-        task, staffByLoad, assignedTasks, resolver, new Set(),
-        t => !t.isLocked && t.start >= scopeStart
-      );
+      const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), isBumpable);
       if (chain) {
         // chain.assigned already reflects the FULL outcome (the broken
         // task included) — the shared commit below must only update
@@ -664,7 +751,7 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
         if (s.name === currentEmp) continue;
         if (!canTake(s, task, resolver, true)) continue;
         if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-        const load = (assignedTasks[s.name] || []).length;
+        const load = ctx.load(s.name, assignedTasks[s.name] || []);
         if (load < bestLoad) { bestLoad = load; bestStaff = s; }
       }
     }
@@ -700,7 +787,14 @@ export function patchConflicts(tasks, staffDB, selectedDate, resolver, windowDat
 // is loaded), `slack` per minute of missing buffer between hand-offs,
 // `overtime` per minute worked past shift end. The defaults keep load
 // balancing dominant, as the greedy passes do.
-export const DEFAULT_WEIGHTS = { load: 100, walk: 1, slack: 3, overtime: 5 };
+//
+// overtime: 50 (was 5). Once the improvement search could use the allowed
+// overtime, at weight 5 an hour of it cost the same as 300 m of walking and
+// it was used freely. Measured on five real days (LNS off): weight 5 -> 160
+// tasks open, 3185 overtime min, 125 person-shifts with overtime; weight 20
+// -> 159 open, 2240 min; weight 50 -> 159 open, 1624 min, 73 person-shifts,
+// walking +2 %. An hour of overtime now costs about 3 km of walking.
+export const DEFAULT_WEIGHTS = { load: 100, walk: 1, slack: 3, overtime: 50 };
 
 // A hand-off between two consecutive tasks is "tight" when it leaves less
 // spare time than this beyond the walk itself. Flights slip; a schedule with
@@ -729,7 +823,7 @@ function transitMs(exitPos, entryPos, resolver) {
 // travel between them, same convention MetricsSummary uses. `sorted` must
 // already be ordered by start — the improvement search keeps every
 // employee's list that way (see insertSorted) so this never has to sort.
-function routeStats(shifts, sorted, resolver) {
+function routeStats(shifts, sorted, resolver, ctx = NO_CONTEXT) {
   const basePos = shifts?.[0]?.basePos ?? null;
   let walk = 0, slackShort = 0, prev = null;
   for (const t of sorted) {
@@ -748,7 +842,7 @@ function routeStats(shifts, sorted, resolver) {
   for (const s of shifts || []) {
     let maxEnd = null;
     for (const t of sorted) {
-      if (t.start >= s.shiftStart && t.start <= s.shiftEnd && (maxEnd === null || t.end > maxEnd)) maxEnd = t.end;
+      if (t.start >= s.shiftStart && t.start <= s.shiftEnd && (maxEnd === null || t.end > maxEnd) && !ctx.has(t)) maxEnd = t.end;
     }
     if (maxEnd && maxEnd > s.shiftEnd) overtime += (maxEnd - s.shiftEnd) / 60000;
   }
@@ -784,10 +878,16 @@ function conflictsSorted(sorted, task, resolver, bounds) {
   }
   // The window above covers every walk the network can make in finite time;
   // a stand with no path to the neighbours is a conflict however long the
-  // gap, so the immediate neighbours just outside it are checked as well.
+  // gap, so the immediate neighbours just outside it are checked as well (all of
+  // them when the network is not transitive for these stands, see conflictBounds).
   if (resolver) {
-    if (lo > 0 && conflictsWith(sorted[lo - 1], task, resolver)) return true;
-    if (i < sorted.length && conflictsWith(sorted[i], task, resolver)) return true;
+    if (bounds.transitive === false) {
+      for (let j = 0; j < lo; j++) if (conflictsWith(sorted[j], task, resolver)) return true;
+      for (let j = i; j < sorted.length; j++) if (conflictsWith(sorted[j], task, resolver)) return true;
+    } else {
+      if (lo > 0 && conflictsWith(sorted[lo - 1], task, resolver)) return true;
+      if (i < sorted.length && conflictsWith(sorted[i], task, resolver)) return true;
+    }
   }
   return false;
 }
@@ -816,14 +916,23 @@ function conflictBounds(tasks, resolver) {
     entries.add(t.entryPos ?? t.pos);
   }
   let need = MIN_TRANSITION_MS;
+  // `transitive`: the network knows a finite walk between every pair of stands in
+  // play. Then a task far away in time can only be a problem if the nearest one
+  // on its side is (walking time grows with the gap, and "reachable" is
+  // transitive), which is what lets the checks below look at the neighbours
+  // alone. A stand outside the network (the heuristic decides there) or a pair
+  // with no path breaks that: a far task may then conflict although the nearer
+  // ones do not, so every task is looked at.
+  let transitive = true;
   if (resolver) {
     for (const e of exits) for (const n of entries) {
       const sec = secondsOf(resolver, e, n);
-      if (sec != null && Number.isFinite(sec) && sec * 1000 > need) need = sec * 1000;
+      if (sec == null || !Number.isFinite(sec)) transitive = false;
+      else if (sec * 1000 > need) need = sec * 1000;
     }
   }
   const longMs = Math.min(maxDur, LONG_TASK_WINDOW_MS);
-  return { before: longMs + need, after: need, longMs };
+  return { before: longMs + need, after: need, longMs, transitive };
 }
 
 // A copy of `list` (ordered by start) with `task` added in its place.
@@ -834,9 +943,11 @@ function insertSorted(list, task) {
   return [...list.slice(0, i), task, ...list.slice(i)];
 }
 
-function employeeCost(W, shifts, sortedTasks, resolver) {
-  const r = routeStats(shifts, sortedTasks, resolver);
-  return W.load * sortedTasks.length ** 2 + W.walk * r.walk + W.slack * r.slackShort + W.overtime * r.overtime;
+// `load` = how many of `sortedTasks` count as the person's work in the window
+// (context tasks are in the list for the hand-offs but are not load).
+function employeeCost(W, shifts, sortedTasks, resolver, ctx = NO_CONTEXT, load = sortedTasks.length) {
+  const r = routeStats(shifts, sortedTasks, resolver, ctx);
+  return W.load * load ** 2 + W.walk * r.walk + W.slack * r.slackShort + W.overtime * r.overtime;
 }
 
 // The weighted cost of a whole assignment (what the improvement search drives
@@ -912,14 +1023,20 @@ export function planMetrics(tasks, staffDB, selectedDate, resolver, windowDates)
 //                  the shift's base point by its start
 //   OVERLAP        overlaps another task of the same person
 //   TRAVEL         not enough time (or no path) to walk from the previous task
-// The later-starting task of a conflicting pair carries the entry.
+// The later-starting task of a conflicting pair carries the entry. Assigned
+// tasks of the days around the window (see windowContext) count as the person's
+// time: a window task that overlaps one, or cannot be reached from it, is
+// reported (on the window task, whichever of the two starts later); the context
+// task itself, and pairs of context tasks, are not the window's business.
 export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates) {
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const shiftsByName = new Map();
-  for (const s of mergeStaffWindow(staffDB, dates)) {
+  const pool = mergeStaffWindow(staffDB, dates);
+  for (const s of pool) {
     if (!shiftsByName.has(s.name)) shiftsByName.set(s.name, []);
     shiftsByName.get(s.name).push(s);
   }
+  const ctx = windowContext(tasks, dates, pool, resolver);
   const allowMs = POLICY.maxOvertimeMin * 60000;
   const onClock = (s, t) =>
     t.start >= s.shiftStart && t.start < s.shiftEnd &&
@@ -936,7 +1053,7 @@ export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates
 
   const byEmp = new Map();
   for (const t of tasks) {
-    if (!dates.includes(t.date) || t.employee === 'Не назначено') continue;
+    if ((!dates.includes(t.date) && !ctx.has(t)) || t.employee === 'Не назначено') continue;
     if (!byEmp.has(t.employee)) byEmp.set(t.employee, []);
     byEmp.get(t.employee).push(t);
   }
@@ -944,6 +1061,7 @@ export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates
     const shifts = shiftsByName.get(name) || [];
     list.sort((a, b) => a.start - b.start || a.end - b.end);
     for (const t of list) {
+      if (ctx.has(t)) continue;
       if (shifts.length === 0) { add(t, 'NO_SHIFT'); continue; }
       const qualified = shifts.filter(s => hasAllQuals(s.quals, t));
       if (qualified.length === 0) {
@@ -957,8 +1075,11 @@ export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
+        const aCtx = ctx.has(a), bCtx = ctx.has(b);
+        if (aCtx && bCtx) continue;
         if (!conflictsWith(a, b, resolver)) continue;
-        add(b, tasksOverlap(a, b) ? 'OVERLAP' : 'TRAVEL', a.id);
+        if (bCtx) add(a, tasksOverlap(a, b) ? 'OVERLAP' : 'TRAVEL', b.id);
+        else add(b, tasksOverlap(a, b) ? 'OVERLAP' : 'TRAVEL', a.id);
       }
     }
   }
@@ -974,12 +1095,15 @@ export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates
 // reopened when it may be, else the earlier one.
 export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
   const { keepBefore, mutableIds } = options;
+  const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   let result = tasks;
   const reopened = [];
   for (let round = 0; round < 50; round++) {
     const violations = validatePlan(result, staffDB, selectedDate, resolver, windowDates);
     const byId = new Map(result.map(t => [t.id, t]));
-    const droppable = t => t && !t.isLocked &&
+    // (only the window's own tasks: the other days' work that blocks one of them
+    // is what it is, not something to reopen)
+    const droppable = t => t && !t.isLocked && dates.includes(t.date) &&
       (!keepBefore || t.start >= keepBefore || (mutableIds && mutableIds.has(t.id)));
     const drop = new Set();
     for (const v of violations) {
@@ -1097,7 +1221,12 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     shiftsByName.get(s.name).push(s);
   }
   const indexById = new Map(result.map((t, i) => [t.id, i]));
-  const bounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
+  // The days around the window still occupy people (see windowContext): they sit
+  // in the lists below so no move creates an overlap or an impossible hand-off
+  // with them, but they are not movable and not load.
+  const ctx = windowContext(result, dates, staff, resolver);
+  const bounds = conflictBounds(ctx.span, resolver);
+  const ctxN = ctx.size > 0 ? name => ctx.count(name) : () => 0;
 
   let byEmp = {};
   let epoch = 0;
@@ -1108,7 +1237,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     byEmp = {};
     for (const name of shiftsByName.keys()) byEmp[name] = [];
     for (const t of result) {
-      if (dates.includes(t.date) && t.employee !== 'Не назначено') {
+      if ((dates.includes(t.date) || ctx.has(t)) && t.employee !== 'Не назначено') {
         if (!byEmp[t.employee]) byEmp[t.employee] = [];
         byEmp[t.employee].push(t);
       }
@@ -1140,7 +1269,8 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     if (!e) {
       const names = [];
       for (const [name, shifts] of shiftsByName) {
-        if (shifts.some(s => canTake(s, task, resolver))) names.push(name);
+        // (with the overtime allowance: the cost charges for it — see chainSearch)
+        if (shifts.some(s => canTake(s, task, resolver, true))) names.push(name);
       }
       e = { names, set: new Set(names) };
       eligibleMemo.set(task.id, e);
@@ -1185,7 +1315,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
         const t = list[i];
         if (skipId !== undefined && t.id === skipId) continue;
         const ts = t.start.getTime();
-        if (ts >= shS && ts <= shE) {
+        if (ts >= shS && ts <= shE && !ctx.has(t)) {
           const te = t.end.getTime();
           if (te > maxEnd) maxEnd = te;
         }
@@ -1339,7 +1469,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       for (const name of rosterChangedSince(rec.roster)) {
         if (rec.prints.has(name)) continue;
         const shifts = shiftsByName.get(name) || [];
-        if (rec.tasks.some(q => shifts.some(sh => canTake(sh, q, resolver)))) return false;
+        if (rec.tasks.some(q => shifts.some(sh => canTake(sh, q, resolver, true)))) return false;
       }
     }
     return true;
@@ -1367,7 +1497,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       for (const name of candidates) {
         const emp = byEmp[name];
         if (!fits(name, task, emp)) continue;
-        const delta = W.load * (2 * emp.length + 1) + insertParts(name, emp, task);
+        const delta = W.load * (2 * (emp.length - ctxN(name)) + 1) + insertParts(name, emp, task);
         if (!best || delta < best.delta) best = { name, delta };
       }
       if (best) {
@@ -1382,7 +1512,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       // Remembered from an earlier call: the same search would fail again.
       if (knownHopeless(task)) { chainFailedAt.set(task.id, chainStamp(task)); continue; }
       const staffByLoad = [...staff].sort(
-        (a, b) => (byEmp[a.name] || []).length - (byEmp[b.name] || []).length
+        (a, b) => ctx.load(a.name, byEmp[a.name] || []) - ctx.load(b.name, byEmp[b.name] || [])
       );
       const trace = failures ? { names: new Set(), tasks: new Set() } : undefined;
       const chain = findChainPlacement(task, staffByLoad, byEmp, resolver, new Set(), isMovable, { left: CHAIN_NODE_BUDGET, bounds, trace, eligibleNames: t => eligibleOf(t).set });
@@ -1449,9 +1579,10 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
 
             // Relocate `task` to B. Lower bound on the delta: B's extra load
             // cost minus what A saves.
-            if (!(prune && -gainA + 2 * W.load * (bTasks.length - aTasks.length + 1) + churn(task, A, B) >= -EPS) &&
+            const loadDiff = bTasks.length - ctxN(B) - (aTasks.length - ctxN(A));
+            if (!(prune && -gainA + 2 * W.load * (loadDiff + 1) + churn(task, A, B) >= -EPS) &&
                 !conflictsSorted(bTasks, task, resolver, bounds)) {
-              const delta = W.load * (2 * (bTasks.length - aTasks.length) + 2) - gainA + insertParts(B, bTasks, task) + churn(task, A, B);
+              const delta = W.load * (2 * loadDiff + 2) - gainA + insertParts(B, bTasks, task) + churn(task, A, B);
               if (delta < -EPS) {
                 foundHere = true;
                 if (!best || delta < best.delta) best = { kind: 'relocate', B, delta };
@@ -1516,12 +1647,12 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
 // task, repeat. A placement's cost is the weighted marginal cost: the load it
 // adds (2n+1 for an employee already at n) plus the insertion walking
 // distance. Returns the tasks nobody could take, for the later passes.
-function constructRegret(toAssign, staff, assignedTasks, result, index, resolver, W) {
+function constructRegret(toAssign, staff, assignedTasks, result, index, resolver, W, ctx = NO_CONTEXT) {
   const costFor = (task, s) => {
     if (!canTake(s, task, resolver)) return null;
     const emp = assignedTasks[s.name] || [];
     if (hasConflict(emp, task, resolver)) return null;
-    return W.load * (2 * emp.length + 1) + W.walk * scoreEmployee(s, assignedTasks, task, resolver).dist;
+    return W.load * (2 * ctx.load(s.name, emp) + 1) + W.walk * scoreEmployee(s, assignedTasks, task, resolver).dist;
   };
   // Best and second-best options must be two different PEOPLE: one person
   // with two shifts in the window is still a single alternative, and counting
@@ -1700,14 +1831,16 @@ function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, f
   const staff = mergeStaffWindow(staffDB, dates);
   if (staff.length === 0) return result;
   const index = indexFirstById(result);
+  const ctx = windowContext(result, dates, staff, resolver);
 
   let assignedTasks = {};
   for (const s of staff) assignedTasks[s.name] = [];
 
   // Pre-load frozen (locked, or already-started) tasks into the assignment
-  // map so the passes below treat their time slots as taken.
+  // map so the passes below treat their time slots as taken. The assigned tasks
+  // of the days around the window are as frozen as those (see windowContext).
   for (const t of result) {
-    if (dates.includes(t.date) && isFrozen(t) && t.employee !== 'Не назначено') {
+    if (((dates.includes(t.date) && isFrozen(t)) || ctx.has(t)) && t.employee !== 'Не назначено') {
       if (!assignedTasks[t.employee]) assignedTasks[t.employee] = [];
       assignedTasks[t.employee].push(t);
     }
@@ -1737,7 +1870,7 @@ function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, f
   let backlog = [];
   const construction = options.construction ?? 'regret';
   if (construction === 'regret') {
-    backlog = constructRegret(toAssign, staff, assignedTasks, result, index, resolver, resolveWeights(options.weights));
+    backlog = constructRegret(toAssign, staff, assignedTasks, result, index, resolver, resolveWeights(options.weights), ctx);
   } else if (construction === 'bestfit') {
     backlog = constructBestFit(toAssign, staff, assignedTasks, result, index, resolver);
   } else {
@@ -1746,7 +1879,7 @@ function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, f
       for (const s of staff) {
         if (!canTake(s, task, resolver)) continue;
         if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-        const score = scoreEmployee(s, assignedTasks, task, resolver);
+        const score = scoreEmployee(s, assignedTasks, task, resolver, ctx);
         if (!bestScore || score.load < bestScore.load ||
             (score.load === bestScore.load && score.dist < bestScore.dist)) {
           bestScore = score; bestStaff = s;
@@ -1765,12 +1898,12 @@ function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, f
   // alphabetically/positionally doesn't soak up every task that falls
   // through to this pass.
   let remaining = [];
-  const passBounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
+  const passBounds = conflictBounds(ctx.span, resolver);
   for (const task of backlog) {
     const staffByLoad = [...staff].sort(
-      (a, b) => (assignedTasks[a.name] || []).length - (assignedTasks[b.name] || []).length
+      (a, b) => ctx.load(a.name, assignedTasks[a.name] || []) - ctx.load(b.name, assignedTasks[b.name] || [])
     );
-    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), t => !isFrozen(t), { left: CHAIN_NODE_BUDGET, bounds: passBounds });
+    const chain = findChainPlacement(task, staffByLoad, assignedTasks, resolver, new Set(), t => !isFrozen(t) && !ctx.has(t), { left: CHAIN_NODE_BUDGET, bounds: passBounds });
     if (chain) {
       assignedTasks = chain.assigned;
       for (const { task: mt, to } of chain.migrations) {
@@ -1801,7 +1934,7 @@ function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, f
     for (const s of staff) {
       if (!canTake(s, task, resolver, true)) continue;
       if (hasConflict(assignedTasks[s.name] || [], task, resolver)) continue;
-      const load = (assignedTasks[s.name] || []).length;
+      const load = ctx.load(s.name, assignedTasks[s.name] || []);
       if (load < bestLoad) { bestLoad = load; bestStaff = s; }
     }
     if (bestStaff) commit(result, index, assignedTasks, task.id, bestStaff.name);
@@ -2070,7 +2203,7 @@ function applyChangesCore(tasks, staffDB, selectedDate, resolver, windowDates, c
 
   lap('prepare');
   // 4. Repair conflicts the changes caused. Nothing before `now` moves.
-  const repair = patchConflicts(result, staffDB, selectedDate, resolver, dates, now ?? MIN_DATE, MAX_DATE);
+  const repair = patchConflicts(result, staffDB, selectedDate, resolver, dates, now ?? MIN_DATE, MAX_DATE, { frozenBefore });
   result = repair.tasks;
   const placeIds = new Set(changedIds);
   for (const c of repair.changes) {
@@ -2201,11 +2334,24 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
 
   const deadline = Date.now() + timeBudgetMs;
   const rnd = mulberry32(seed);
-  const lnsBounds = conflictBounds(result.filter(t => dates.includes(t.date)), resolver);
+  const ctx = windowContext(result, dates, staff, resolver);
+  const lnsBounds = conflictBounds(ctx.span, resolver);
   const pick = arr => arr[Math.floor(rnd() * arr.length)];
+  // A uniform shuffle from the search's own stream (Fisher-Yates). `sort(() =>
+  // rnd() - 0.5)` is not one: the comparator contradicts itself, so the order
+  // is biased and depends on the engine's sorting algorithm.
+  const shuffled = arr => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
   const OPEN = 'Не назначено';
   const inWin = t => dates.includes(t.date);
-  const canMove = t => !t.isLocked && (!frozenBefore || t.start >= frozenBefore);
+  // (the days around the window are in the lists as context and never move)
+  const canMove = t => inWin(t) && !t.isLocked && (!frozenBefore || t.start >= frozenBefore);
 
   const shiftsByName = new Map();
   for (const s of staff) {
@@ -2217,7 +2363,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     let e = eligibleMemo.get(t.id);
     if (!e) {
       e = [];
-      for (const [name, shifts] of shiftsByName) if (shifts.some(s => canTake(s, t, resolver))) e.push(name);
+      for (const [name, shifts] of shiftsByName) if (shifts.some(s => canTake(s, t, resolver, true))) e.push(name);
       eligibleMemo.set(t.id, e);
     }
     return e;
@@ -2228,11 +2374,11 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
   let lists = {};
   for (const name of shiftsByName.keys()) lists[name] = [];
   for (const t of result) {
-    if (!inWin(t) || t.employee === OPEN) continue;
+    if ((!inWin(t) && !ctx.has(t)) || t.employee === OPEN) continue;
     (lists[t.employee] ??= []).push(t);
   }
   for (const l of Object.values(lists)) l.sort((a, b) => a.start - b.start);
-  const costOf = (name, list) => employeeCost(W, shiftsByName.get(name), list, resolver);
+  const costOf = (name, list) => employeeCost(W, shiftsByName.get(name), list, resolver, ctx, ctx.load(name, list));
   const empCost = new Map(Object.entries(lists).map(([n, l]) => [n, costOf(n, l)]));
   let openSet = new Set(result.filter(t => inWin(t) && t.employee === OPEN && canMove(t)).map(t => t.id));
   const owner = new Map();
@@ -2253,7 +2399,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     const focused = focusDates ? candidates.filter(id => focusDates.includes(byId.get(id).date)) : [];
     const target = byId.get(pick(focused.length > 0 && rnd() < 0.8 ? focused : candidates));
     const lo = target.start.getTime() - 3600000, hi = target.end.getTime() + 3600000;
-    const people = [...eligibleOf(target)].sort(() => rnd() - 0.5).slice(0, destroyPeople);
+    const people = shuffled(eligibleOf(target)).slice(0, destroyPeople);
     const removed = [];
     for (const n of people) {
       for (const t of lists[n] || []) {
@@ -2331,7 +2477,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     const still = [];
     for (const id of unplaced) {
       const t = byId.get(id);
-      const staffByLoad = [...staff].sort((a, b) => (cand[a.name] || []).length - (cand[b.name] || []).length);
+      const staffByLoad = [...staff].sort((a, b) => ctx.load(a.name, cand[a.name] || []) - ctx.load(b.name, cand[b.name] || []));
       const chain = findChainPlacement(t, staffByLoad, cand, resolver, new Set(), canMove, { left: 60, bounds: lnsBounds });
       if (!chain) { still.push(id); continue; }
       for (const n of Object.keys(chain.assigned)) {

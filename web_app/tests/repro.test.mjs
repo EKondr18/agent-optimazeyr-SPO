@@ -145,7 +145,8 @@ test('improveAssignment: maxSteps stops at the same point on any clock, deadline
 });
 
 test('applyChanges: one batch gives one result on any clock; a step limit is reported, a time cut is flagged', () => {
-  const { tasks, staff } = instance(9);
+  // (an instance whose batch takes enough steps for the slow clocks below to matter)
+  const { tasks, staff } = instance(3);
   const plan = planWindow(tasks, staff, DATE, null, WIN, { lnsIterations: 0 }).tasks;
   const movable = plan.filter(t => t.employee !== OPEN && t.start >= D(11)).slice(0, 24);
   const changes = [

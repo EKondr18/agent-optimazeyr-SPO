@@ -6,7 +6,7 @@
 // in or extend, arrived at by actually re-running the optimizer with them
 // added — so the dispatcher sees a proposal that accounts for reshuffling
 // the whole day, not just a literal one-task-at-a-time patch.
-import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound, certifyPlan, runWithPolicy } from '../optimizer.js';
+import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound, certifyPlan, runWithPolicy, getPolicy } from '../optimizer.js';
 
 // Price of moving an already-assigned task while working in the open ones.
 // On real 01.09 (window 31.08-02.09): at 300 the plan reassigned 206 of the
@@ -213,6 +213,15 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
   return best;
 }
 
+// The plan is for ONE day: `targetDate`. Only that day's open tasks are goals;
+// the days around it are context — their assigned tasks keep their people busy
+// (an extension or a call-in must not run into them, nothing is moved onto or
+// off them) and are returned as they were, and their open tasks are neither
+// planned for nor counted. So `windowDates` no longer widens what is planned
+// (it is accepted for compatibility): `unresolved`, `actions`, `minExtra` and
+// `unresolvedReasons` all describe the selected day, which is what the tile
+// the dispatcher is looking at counts.
+//
 // Builds a plan to resolve `targetDate`'s backlog by proposing, one at a
 // time, either (a) extending an already-scheduled employee's shift to
 // reach a nearby task with their existing (possibly aircraft-type)
@@ -240,12 +249,32 @@ export function resolveStaffingWithCallIns(args) {
   return runWithPolicy(args.policy, () => resolveStaffing(args));
 }
 
+// The staff table with the target day's shifts replaced by working copies — in
+// EVERY date bucket that holds the shift, not just the target day's. A shift
+// that crosses midnight is filed under each date it touches (the same shift,
+// keyed by name + start), and anything that reads a window of dates keeps the
+// first copy it meets: an extension made only to the target day's copy was
+// invisible next to the original filed under the day before, and a night shift
+// of the day before could never be stretched to reach a task of the target day.
+function withWorkingCopies(staffDB, targetDate) {
+  const keyOf = s => `${s.name}__${s.shiftStart.getTime()}`;
+  const copies = new Map();
+  for (const s of staffDB[targetDate] || []) if (!copies.has(keyOf(s))) copies.set(keyOf(s), { ...s });
+  const working = [...copies.values()];
+  const db = { ...staffDB, [targetDate]: working };
+  for (const [date, list] of Object.entries(staffDB)) {
+    if (date === targetDate || !list.some(s => copies.has(keyOf(s)))) continue;
+    db[date] = list.map(s => copies.get(keyOf(s)) ?? s);
+  }
+  return { db, working };
+}
+
 function resolveStaffing({
-  tasksDB, staffDB, targetDate, windowDates, fullRoster = [], allShiftsByPerson = new Map(), distanceResolver,
+  tasksDB, staffDB, targetDate, fullRoster = [], allShiftsByPerson = new Map(), distanceResolver,
 }) {
-  const dates = windowDates && windowDates.length > 0 ? windowDates : [targetDate];
-  const workingStaff = (staffDB[targetDate] || []).map(s => ({ ...s }));
-  let currentStaffDB = { ...staffDB, [targetDate]: workingStaff };
+  const dates = [targetDate];
+  const { db: workedDB, working: workingStaff } = withWorkingCopies(staffDB, targetDate);
+  let currentStaffDB = workedDB;
   // The plan builds on the schedule the dispatcher is looking at: whatever is
   // already assigned stays, and only the open tasks are worked in through
   // extensions and call-ins. (Re-solving the whole window from scratch, as
@@ -255,7 +284,7 @@ function resolveStaffing({
   // Only a window with nothing assigned yet — say, tomorrow before anyone ran
   // the optimizer on it — gets a fresh run first. Anything in the current
   // schedule the rules reject is reopened rather than built on.
-  const anyAssigned = tasksDB.some(t => dates.includes(t.date) && t.employee !== 'Не назначено');
+  const anyAssigned = tasksDB.some(t => t.date === targetDate && t.employee !== 'Не назначено');
   let currentTasks = anyAssigned
     ? certifyPlan(tasksDB, currentStaffDB, targetDate, distanceResolver, dates).tasks
     : runOptimizer(tasksDB, currentStaffDB, targetDate, distanceResolver, dates);
@@ -417,13 +446,20 @@ function trimActions(actions, tasks, dates, workingStaff, resolver) {
     if (!byName.has(t.employee)) byName.set(t.employee, []);
     byName.get(t.employee).push(t);
   }
+  // A task that starts in the shift and ends within the policy's overtime
+  // allowance past its end is valid and the search uses that (see
+  // improveAssignment), so it belongs to the proposal as well. It needs the
+  // shift only up to the end the search worked with — the allowance covers the
+  // rest — so no proposal is ever stretched past what was offered for it.
+  const allowMs = getPolicy().maxOvertimeMin * 60000;
   for (let i = actions.length - 1; i >= 0; i--) {
     const a = actions[i];
-    const inside = (byName.get(a.name) || []).filter(t => t.start >= a.shiftStart && t.end <= a.shiftEnd);
+    const inside = (byName.get(a.name) || []).filter(t => t.start >= a.shiftStart && t.start < a.shiftEnd && t.end <= a.shiftEnd.getTime() + allowMs);
+    const endIn = t => Math.min(t.end.getTime(), a.shiftEnd.getTime());
     if (a.type === 'callin') {
       if (inside.length === 0) { actions.splice(i, 1); continue; }
       const first = Math.min(...inside.map(t => t.start.getTime()));
-      const last = Math.max(...inside.map(t => t.end.getTime()));
+      const last = Math.max(...inside.map(endIn));
       const start = Math.max(a.shiftStart.getTime(), first);
       const end = Math.min(a.shiftEnd.getTime(), Math.max(last, start + MIN_CALLIN_MS));
       a.shiftStart = new Date(start);
@@ -438,7 +474,7 @@ function trimActions(actions, tasks, dates, workingStaff, resolver) {
       const start = need < a.originalStart.getTime()
         ? Math.max(a.shiftStart.getTime(), need)
         : a.originalStart.getTime();
-      const end = after.length ? Math.max(...after.map(t => t.end.getTime())) : a.originalEnd.getTime();
+      const end = after.length ? Math.max(...after.map(endIn)) : a.originalEnd.getTime();
       if (start >= a.originalStart.getTime() && end <= a.originalEnd.getTime()) { actions.splice(i, 1); continue; }
       a.shiftStart = new Date(Math.min(start, a.originalStart.getTime()));
       a.shiftEnd = new Date(Math.max(end, a.originalEnd.getTime()));
