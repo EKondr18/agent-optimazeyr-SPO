@@ -18,7 +18,7 @@ import { createDistanceResolver } from './utils/travelGraph';
 import { resolveStaffingWithCallIns } from './utils/staffingGap';
 import {
   applyChanges, planWindow, DEFAULT_WEIGHTS, DEFAULT_POLICY, setPolicy, findConflicts, hasAllQuals,
-  fitsShift, requiredQuals, validatePlan,
+  fitsShift, requiredQuals, validatePlan, DEFAULT_LNS_ITERATIONS,
 } from './optimizer';
 import { dataQualityReport } from './utils/dataQuality';
 import { dayKey, dayStart, addDays, daysBetween, fmtHM, fmtDM } from './utils/tz';
@@ -246,7 +246,7 @@ function SidebarContent({
   locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
   availableDates, datesWithShifts, selectedDate, setSelectedDate,
   handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
-  policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
+  policy, setPolicyState, lnsIterations, setLnsIterations, qualOptions,
   filterTypes, allTaskTypes, toggleType, setFilterTypes,
   onClose,
 }) {
@@ -480,13 +480,13 @@ function SidebarContent({
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
-                <Text style={{ fontSize: 12 }} title="Сколько секунд дополнительно искать перестановки групп задач (LNS) после основного прохода. 0 — не искать">
-                  Доп. поиск (LNS), сек
+                <Text style={{ fontSize: 12 }} title="Сколько попыток дополнительного поиска перестановок групп задач (LNS) делать после основного прохода. 0 — не искать. Число попыток, а не секунды: одинаковые данные дают одинаковый план на любом компьютере (≈200 попыток — около 3 секунд)">
+                  Доп. поиск (LNS), попыток
                 </Text>
                 <InputNumber
-                  size="small" min={0} max={30} step={1} style={{ width: 72 }}
-                  value={lnsBudgetSec}
-                  onChange={v => setLnsBudgetSec(v ?? 0)}
+                  size="small" min={0} max={1000} step={50} style={{ width: 72 }}
+                  value={lnsIterations}
+                  onChange={v => setLnsIterations(v ?? 0)}
                 />
               </div>
             </div>
@@ -572,7 +572,7 @@ export default function App() {
   // thread for the manual-assignment checks and sent with every worker job.
   const [policy, setPolicyState] = useState(DEFAULT_POLICY);
   setPolicy(policy);
-  const [lnsBudgetSec, setLnsBudgetSec] = useState(3);
+  const [lnsIterations, setLnsIterations] = useState(DEFAULT_LNS_ITERATIONS);
   // What the last optimizer run reported (open tasks per stage, lower bound,
   // checks) — shown under the metrics.
   const [planStats, setPlanStats] = useState(null);
@@ -890,7 +890,7 @@ export default function App() {
   function runJobHere(kind, payload) {
     try {
       if (kind === 'run') {
-        return Promise.resolve(planWindow(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights, lnsBudgetMs: payload.lnsBudgetMs }));
+        return Promise.resolve(planWindow(payload.tasks, payload.staffDB, payload.selectedDate, distanceResolver, payload.windowDates, { weights: payload.weights, lnsIterations: payload.lnsIterations }));
       }
       if (kind === 'gap') {
         return Promise.resolve(resolveStaffingWithCallIns({ ...payload.args, distanceResolver }));
@@ -994,7 +994,7 @@ export default function App() {
       // planWindow in optimizer.js).
       const { tasks: improved, stats } = await runJob('run', {
         tasks: tasksDB, staffDB, selectedDate, windowDates, weights: optWeights,
-        lnsBudgetMs: Math.round(lnsBudgetSec * 1000),
+        lnsIterations,
       });
       if (tasksRef.current !== startedFrom) {
         message.warning('Пока шёл расчёт, расписание изменили вручную — результат оптимизатора не применён, чтобы не затереть правки. Запустите ещё раз.');
@@ -1288,7 +1288,7 @@ export default function App() {
     locationsFile, handleLocationsRows, travelGraphFile, handleTravelGraphRows,
     availableDates, datesWithShifts, selectedDate, setSelectedDate,
     handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
-    policy, setPolicyState, lnsBudgetSec, setLnsBudgetSec, qualOptions,
+    policy, setPolicyState, lnsIterations, setLnsIterations, qualOptions,
     filterTypes, allTaskTypes, toggleType, setFilterTypes,
   };
 

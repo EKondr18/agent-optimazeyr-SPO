@@ -1,4 +1,5 @@
 import { getPosDistance } from './utils/posDistance.js';
+import { TZ_OFFSET_MS, dayKey } from './utils/tz.js';
 
 const MIN_TRANSITION_MS = 5 * 60000;
 const MIN_TRANSITION_POS_DIST = 5;
@@ -27,13 +28,153 @@ const WALK_EPS_MS = 1;
 //                       decision); every such assignment is counted and shown.
 //                       Empty by default: every requirement is hard.
 export const DEFAULT_POLICY = { sameFlightOverlap: false, maxOvertimeMin: 60, waivedQuals: [] };
-let POLICY = { ...DEFAULT_POLICY };
+// Longest overtime allowance a caller can ask for — the same bound the
+// settings form enforces, so a request cannot ask for more than the UI can.
+const MAX_OVERTIME_CAP_MIN = 240;
+
+// A policy from anywhere (a form, a JSON request, a test) reduced to the three
+// known fields with usable values. Unchecked, `maxOvertimeMin: NaN` made every
+// "ends later than shift end + allowance" test false — unlimited overtime — and
+// `waivedQuals: null` crashed the qualification check.
+function normalizePolicy(policy) {
+  const src = policy && typeof policy === 'object' ? policy : {};
+  let overtime = src.maxOvertimeMin;
+  if (typeof overtime === 'string' && overtime.trim() !== '') overtime = Number(overtime);
+  overtime = typeof overtime === 'number' && Number.isFinite(overtime)
+    ? Math.min(MAX_OVERTIME_CAP_MIN, Math.max(0, overtime))
+    : DEFAULT_POLICY.maxOvertimeMin;
+  return {
+    sameFlightOverlap: src.sameFlightOverlap === undefined ? DEFAULT_POLICY.sameFlightOverlap : Boolean(src.sameFlightOverlap),
+    maxOvertimeMin: overtime,
+    waivedQuals: Array.isArray(src.waivedQuals) ? src.waivedQuals.filter(q => typeof q === 'string') : [],
+  };
+}
+
+let POLICY = normalizePolicy(DEFAULT_POLICY);
 export function setPolicy(policy) {
-  POLICY = { ...DEFAULT_POLICY, ...(policy || {}) };
+  POLICY = normalizePolicy(policy);
 }
 export function getPolicy() {
   return POLICY;
 }
+
+// Runs `fn` under `policy` and puts the previous policy back afterwards, even
+// when `fn` throws — so one request's rules never leak into the next one (the
+// policy is module state, and a server handles many requests in one process).
+// `fn` must be synchronous: the policy is restored when it returns, not when a
+// promise it returns settles. No policy given = `fn` runs under whatever is
+// current.
+export function runWithPolicy(policy, fn) {
+  if (policy == null) return fn();
+  const saved = POLICY;
+  POLICY = normalizePolicy(policy);
+  try {
+    return fn();
+  } finally {
+    POLICY = saved;
+  }
+}
+
+// ── Input at the API boundary ───────────────────────────────────────────────
+// What arrives from a form, a JSON request or another service is not what the
+// search below assumes (real Date objects, finite times, end after start, one
+// task per id). Comparisons with an Invalid Date are all false, so such a task
+// "fits any shift and overlaps nothing" and slips past every hard rule; a
+// repeated id makes the id-indexed lookups see only the first copy. So the
+// entry points (planWindow, runOptimizer, applyChanges) make the tasks usable
+// first and set aside the ones that cannot be, with a reason, instead of
+// guessing: a set-aside task takes no part in the calculation and comes back
+// open in its place.
+const OPEN_EMPLOYEE = 'Не назначено';
+
+// ISO date-time with NO zone is Moscow wall-clock time — the project-wide rule
+// of the loader (see dataParser) — never the timezone of the process.
+const ZONELESS_ISO = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3})\d*)?)?$/;
+// A Date (as is), epoch milliseconds or a string -> Date; anything else, or
+// anything unreadable, gives an Invalid Date.
+function toInstant(v) {
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') return new Date(v);
+  if (typeof v === 'string') {
+    const str = v.trim();
+    const m = ZONELESS_ISO.exec(str);
+    if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0), +((m[7] || '0').padEnd(3, '0'))) - TZ_OFFSET_MS);
+    return str ? new Date(str) : new Date(NaN);
+  }
+  return new Date(NaN);
+}
+const isValidDate = d => d instanceof Date && Number.isFinite(d.getTime());
+
+// Why a task cannot take part in a calculation (null = it can). First problem wins.
+function taskProblem(t) {
+  if (!t || typeof t !== 'object') return 'NOT_AN_OBJECT';
+  if (t.id === undefined || t.id === null || t.id === '') return 'NO_ID';
+  if (!isValidDate(t.start)) return 'BAD_START';
+  if (!isValidDate(t.end)) return 'BAD_END';
+  if (t.end.getTime() <= t.start.getTime()) return 'END_NOT_AFTER_START';
+  return null;
+}
+
+// The task with its fields in the shapes the search relies on. Returns the SAME
+// object when nothing needs to change (the common case: the loader's tasks are
+// already in shape) and a copy otherwise — the input is never modified.
+function normalizeTask(t) {
+  if (!t || typeof t !== 'object') return t;
+  let out = t;
+  const set = (k, v) => { if (out === t) out = { ...t }; out[k] = v; };
+  for (const k of ['start', 'end']) {
+    const d = toInstant(t[k]);
+    if (isValidDate(d) && d !== t[k]) set(k, d);
+  }
+  // Reference times: unreadable ones fall back to the current times.
+  for (const [k, from] of [['baseStart', 'start'], ['baseEnd', 'end']]) {
+    if (t[k] === undefined) continue;
+    const d = toInstant(t[k]);
+    if (isValidDate(d)) { if (d !== t[k]) set(k, d); } else if (isValidDate(out[from])) set(k, out[from]);
+  }
+  if (t.employee === undefined || t.employee === null || t.employee === '') set('employee', OPEN_EMPLOYEE);
+  if (t.isLocked === undefined || t.isLocked === null) set('isLocked', false);
+  // The day a task belongs to picks the planning window; one without it would
+  // silently be left out of every calculation.
+  if (typeof t.date !== 'string' && isValidDate(out.start)) set('date', dayKey(out.start));
+  return out;
+}
+
+// All tasks normalized, in their positions, and the ones to set aside:
+// `skip` = [{ index, id, reason }]. A repeated id sets aside every copy after
+// the first.
+function normalizeTasks(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const out = new Array(list.length);
+  const skip = [];
+  const seen = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const t = normalizeTask(list[i]);
+    out[i] = t;
+    let reason = taskProblem(t);
+    if (!reason) {
+      if (seen.has(t.id)) reason = 'DUPLICATE_ID'; else seen.add(t.id);
+    }
+    if (reason) skip.push({ index: i, id: t && typeof t === 'object' ? t.id : undefined, reason });
+  }
+  return { tasks: out, skip };
+}
+
+const openCopy = t => (t && typeof t === 'object' ? { ...t, employee: OPEN_EMPLOYEE } : t);
+
+// `computed` (tasks that took part, in any order) put back among the ones set
+// aside: the original order, every set-aside task open in its own place.
+function mergeSkipped(normalized, skip, computed) {
+  const skipAt = new Set(skip.map(x => x.index));
+  const byId = new Map(computed.map(t => [t.id, t]));
+  return normalized.map((t, i) => (skipAt.has(i) ? openCopy(t) : (byId.get(t.id) ?? t)));
+}
+
+const summarizeSkipped = skip => {
+  const reasons = {};
+  for (const x of skip) reasons[x.reason] = (reasons[x.reason] || 0) + 1;
+  return { count: skip.length, reasons, items: skip.map(({ id, reason }) => ({ id, reason })) };
+};
 
 // Times are compared as numbers (getTime) in every check below that runs
 // hundreds of thousands of times: `a.start < b.end` on two Date objects goes
@@ -178,8 +319,14 @@ export function fitsShift(shift, task, resolver, allowOvertime = false) {
   const ts = task.start.getTime(), te = task.end.getTime();
   const ss = shift.shiftStart.getTime(), se = shift.shiftEnd.getTime();
   if (ts < ss) return false;
+  // One definition of "inside the shift" for every caller: a task that starts at
+  // or after the shift's end is outside it, whatever its length — otherwise a
+  // zero-length task at the end instant passed the strict test (te > se is
+  // false) but not the overtime one, and the builder placed what the validator
+  // then rejected. A zero-length task at the shift's START is inside.
+  if (ts >= se) return false;
   if (allowOvertime) {
-    if (ts >= se || te > se + POLICY.maxOvertimeMin * 60000) return false;
+    if (te > se + POLICY.maxOvertimeMin * 60000) return false;
   } else if (te > se) {
     return false;
   }
@@ -775,8 +922,8 @@ export function validatePlan(tasks, staffDB, selectedDate, resolver, windowDates
   }
   const allowMs = POLICY.maxOvertimeMin * 60000;
   const onClock = (s, t) =>
-    t.start >= s.shiftStart &&
-    (t.end <= s.shiftEnd || (t.start < s.shiftEnd && t.end.getTime() <= s.shiftEnd.getTime() + allowMs));
+    t.start >= s.shiftStart && t.start < s.shiftEnd &&
+    (t.end <= s.shiftEnd || t.end.getTime() <= s.shiftEnd.getTime() + allowMs);
 
   const out = [];
   const seen = new Set();
@@ -861,8 +1008,8 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 // Every candidate is checked with the construction's own rules
 // (qualifications, shift bounds, conflicts incl. travel feasibility), so the
 // result is always another valid assignment. Each accepted move strictly
-// lowers (open tasks, total cost), so the search ends on its own — no time or
-// iteration cap.
+// lowers (open tasks, total cost), so the search ends on its own; the limits
+// below (maxSteps, deadline) are optional extras for callers with a latency budget.
 //
 // options:
 //   weights          — cost weights (see DEFAULT_WEIGHTS)
@@ -878,9 +1025,17 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 //                      (even inside the frozen window)
 //   pinnedEmployees  — iterable of names whose tasks must not move (they may
 //                      still receive tasks)
-//   deadline         — epoch ms; the search stops there with whatever it has
-//                      (every intermediate state is a valid plan), and
-//                      terminationReason says 'deadline' instead of 'converged'
+//   maxSteps         — the deterministic limit: how many candidate tasks the
+//                      search may look at in total (each task examined for a
+//                      move or a swap, each open task tried for a place). The
+//                      same input stops at the same point on any machine, which
+//                      a clock never guarantees. Default: no limit (a full
+//                      run). terminationReason says 'max-steps'.
+//   deadline         — epoch ms; a safety net only: the search stops there
+//                      with whatever it has (every intermediate state is a
+//                      valid plan), terminationReason says 'deadline' and
+//                      timeCut is true — the result then depends on how fast
+//                      the machine was and is not reproducible
 //   confirmRound     — default true: after the pruned search stops, one full
 //                      unpruned round confirms a true local optimum. It only
 //                      catches a rare case (see below) and costs as much as
@@ -905,7 +1060,7 @@ export function certifyPlan(tasks, staffDB, selectedDate, resolver, windowDates,
 //                      reshuffled hundreds of unrelated assignments for tiny
 //                      gains. Default: no price (a full planning run).
 export function improveAssignment(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { frozenBefore, priorityUntil, weights, deadline, moveCost, confirmRound = true, chainMemory } = options;
+  const { frozenBefore, priorityUntil, weights, deadline, maxSteps, moveCost, confirmRound = true, chainMemory } = options;
   const originalEmp = new Map();
   if (moveCost) for (const t of tasks) if (t.employee !== 'Не назначено') originalEmp.set(t.id, t.employee);
   // Change in the disruption price if `task` goes from `from` to `to`.
@@ -917,6 +1072,14 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     }
     : () => 0;
   const overDeadline = () => deadline != null && Date.now() > deadline;
+  // Why the search was cut short, if it was. The step limit is checked first:
+  // it is the one that makes the stop reproducible.
+  let steps = 0, cutBy = null;
+  const outOfBudget = () => {
+    if (maxSteps != null && steps >= maxSteps) { cutBy ??= 'max-steps'; return true; }
+    if (overDeadline()) { cutBy ??= 'deadline'; return true; }
+    return false;
+  };
   const W = resolveWeights(weights);
   const scope = options.scopeEmployees ? new Set(options.scopeEmployees) : null;
   const scopeTaskIds = options.scopeTaskIds ? new Set(options.scopeTaskIds) : null;
@@ -926,7 +1089,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
   const touchedList = () => (scope ? [...scope] : []);
-  if (staff.length === 0) return { tasks: result, moves: 0, touched: touchedList(), terminationReason: 'no-staff' };
+  if (staff.length === 0) return { tasks: result, moves: 0, steps: 0, timeCut: false, touched: touchedList(), terminationReason: 'no-staff' };
 
   const shiftsByName = new Map();
   for (const s of staff) {
@@ -1196,7 +1359,8 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
       (scopeTaskIds ? scopeTaskIds.has(t.id) : (!frozenBefore || t.start >= frozenBefore))
     );
     for (const task of pool) {
-      if (overDeadline()) break;
+      if (outOfBudget()) break;
+      steps++;
       const candidates = eligibleOf(task).names;
       if (candidates.length === 0) continue; // nobody could ever take it
       let best = null;
@@ -1263,9 +1427,10 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
         improved = false;
         const movers = result.filter(t => isMover(t) && inScope(t.employee));
         for (const stale of movers) {
-          if (overDeadline()) { stopped = true; break; }
+          if (outOfBudget()) { stopped = true; break; }
           const task = result[indexById.get(stale.id)];
           if (!isMover(task) || !inScope(task.employee)) continue;
+          steps++;
           const A = task.employee;
           const aTasks = byEmp[A];
           const aRest = aTasks.filter(t => t.id !== task.id);
@@ -1337,7 +1502,7 @@ export function improveAssignment(tasks, staffDB, selectedDate, resolver, window
     if (!progress && prune && !stopped && confirmRound) { prune = false; seenByTask.clear(); progress = true; }
   }
 
-  return { tasks: result, moves, touched: touchedList(), terminationReason: stopped ? 'deadline' : 'converged' };
+  return { tasks: result, moves, steps, timeCut: cutBy === 'deadline', touched: touchedList(), terminationReason: cutBy ?? 'converged' };
 }
 
 // Regret-2 construction (replaces the hardest-first order of PASS 1).
@@ -1513,6 +1678,16 @@ function constructBestFit(toAssign, staff, assignedTasks, result, index, resolve
 // while with plenty of staff the two end up about equal after the improvement
 // pass. options.weights: cost weights for 'regret' (see DEFAULT_WEIGHTS).
 export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime, options = {}) {
+  const { tasks: normalized, skip } = normalizeTasks(tasks);
+  if (skip.length === 0) return runOptimizerCore(normalized, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime, options);
+  const skipAt = new Set(skip.map(x => x.index));
+  const computed = runOptimizerCore(normalized.filter((_, i) => !skipAt.has(i)), staffDB, selectedDate, resolver, windowDates, freezeBeforeTime, options);
+  return mergeSkipped(normalized, skip, computed);
+}
+
+// The construction itself, for tasks that are already normalized (planWindow and
+// applyChanges check their input once and call this directly).
+function runOptimizerCore(tasks, staffDB, selectedDate, resolver, windowDates, freezeBeforeTime, options = {}) {
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const isFrozen = t => t.isLocked || (freezeBeforeTime && t.start < freezeBeforeTime);
 
@@ -1636,6 +1811,32 @@ export function runOptimizer(tasks, staffDB, selectedDate, resolver, windowDates
   return result;
 }
 
+// ── Search limits ───────────────────────────────────────────────────────────
+// An identical request must give an identical plan on a busy machine and an
+// idle one, so every search stops on a COUNT of work done, never on the clock.
+// Time is only a safety net against a runaway; a search the net cuts says so
+// (timeCut: true, terminationReason: 'deadline') because that one result is
+// not reproducible.
+//
+// LNS attempts in a full planning run. Measured on the three heaviest real days
+// (600-700 tasks, 1700-1900 in the 3-day window): 3 s of work bought 164-232
+// attempts, so 200 is about the 3 s the old fixed budget gave (2.7-3.6 s). More
+// is not worth it: from 100 to 400 attempts the open tasks of each of those
+// days went down by one while the time quadrupled.
+export const DEFAULT_LNS_ITERATIONS = 200;
+const SAFETY_NET_MS = 30000;
+const LNS_SAFETY_MS = SAFETY_NET_MS;
+// Escalation after a batch update: attempts. Its own stop after 25 attempts in
+// a row that change nothing ended every measured batch within 45 attempts, so
+// this is a cap with plenty of room (~15 ms an attempt), not a working limit.
+const ESCALATE_ITERATIONS = 200;
+// Candidate tasks one batch update's improvement search may examine. Measured
+// on six real days, batches of 20 and 100 changes (mixed shifts, additions,
+// cancellations), no limit: 300-2500 candidates for 20 changes (median ~700),
+// 1800-9100 for 100 (median ~2800). 15000 is five times that median: it never
+// cut a measured batch, and at 0.1-0.17 ms a candidate it bounds the search at
+// about 1.5-2.5 s, the old 1.5 s budget's worth.
+export const DEFAULT_IMPROVE_MAX_STEPS = 15000;
 const MIN_DATE = new Date(-8.64e15);
 // Default price, in cost units, of moving an already-published assignment
 // during an incremental update (×3 inside the stability window). For scale:
@@ -1651,7 +1852,12 @@ const MAX_DATE = new Date(8.64e15);
 //
 //   changes — task objects to add or update (matched by `id`; for an existing
 //             task only the supplied fields change, its assignment and lock
-//             are kept), or { id, removed: true } to drop one.
+//             are kept), or { id, removed: true } to drop one. Applied in
+//             order, so several changes to one id in a batch stack up. Times
+//             may be Dates, epoch milliseconds or ISO strings. A change that
+//             cannot be applied (no id, an unreadable time, an end not after
+//             the start, an unknown id without both times) is skipped and
+//             reported in `rejected`; the rest of the batch still goes through.
 //
 // Steps: apply the changes → unassign changed tasks their employee can no
 // longer take (qualification / shift) → repair conflicts they caused (chains
@@ -1661,10 +1867,13 @@ const MAX_DATE = new Date(8.64e15);
 // change ripples outward until nothing more improves.
 //
 // options:
-//   now                — Date: tasks starting before now + frozenWindowMs are
-//                        hard-frozen for the improvement search (only the
-//                        conflict repair may touch them, when genuinely
-//                        broken); omit for no freeze
+//   now                — Date (or epoch ms / ISO string): tasks starting before
+//                        now + frozenWindowMs are hard-frozen for the
+//                        improvement search (only the conflict repair may touch
+//                        them, when genuinely broken); omit for no freeze. A
+//                        `now` that cannot be read applies NO change (every one
+//                        is rejected as BAD_NOW): without it the history would
+//                        not be protected.
 //   frozenWindowMs     — default 1 h
 //   stabilityWindowMs  — default 3 h; the improvement search settles tasks
 //                        before now + this first, then the rest
@@ -1675,48 +1884,159 @@ const MAX_DATE = new Date(8.64e15);
 //   escalate           — default true. If a changed task is still without an
 //                        employee after the incremental repair, run a short
 //                        coverage-only LNS around exactly those tasks
-//                        (escalateBudgetMs, default 0.5 s) and keep it only if
-//                        it places more of them. Never touches the frozen
-//                        window, never reshuffles for cost.
-//   improveBudgetMs    — time limit of the incremental improvement search
-//                        (default 1.5 s); placing the changed tasks always
-//                        comes first, the polishing after it is what may be cut
+//                        (escalateIterations, default 200, and it also stops
+//                        after 25 attempts in a row that change nothing) and
+//                        keep it only if it places more of them. Never touches
+//                        the frozen window, never reshuffles for cost.
+//   improveMaxSteps    — the limit of the incremental improvement search, in
+//                        candidate tasks examined (default
+//                        DEFAULT_IMPROVE_MAX_STEPS); placing the changed tasks
+//                        always comes first, the polishing after it is what may
+//                        be cut. A count, not seconds: the same batch gives the
+//                        same plan on any machine.
+//   improveBudgetMs, escalateBudgetMs — safety nets in milliseconds (default
+//                        30 s each), not the working limits. If one fires the
+//                        result carries timeCut: true and
+//                        terminationReason: 'deadline' and is not reproducible.
 //   stability          — price of moving a published assignment (default
 //                        300 cost units, ×3 inside the stability window);
 //                        0 = no price, every improvement is taken
+//   policy             — the operating policy for this call (see
+//                        DEFAULT_POLICY); omitted = the current one
 //   weights, construction — see improveAssignment / runOptimizer
 //
-// Returns { tasks, touched, changedIds, unplaced, repairs, escalated }:
-// `unplaced` are changed tasks that still have no employee; `repairs`
-// describes each task the conflict repair moved or dropped.
-export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates, changes, options = {}) {
+// Returns { tasks, touched, changedIds, unplaced, repairs, escalated,
+// needsDecision, violations, rejected, timeCut, terminationReason,
+// improveTermination, work, ms }: `unplaced` are changed tasks that still have
+// no employee; `repairs` describes each task the conflict repair moved or
+// dropped; `work` is the amount of search done (candidate tasks examined,
+// escalation attempts), for choosing the limits; `rejected` =
+// [{ id, reason, source }] lists what took no part ('change' = an entry of the
+// batch, 'task' = a task of the plan that is unusable and comes back open).
+export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates, changes, options) {
+  const opts = options || {};
+  return runWithPolicy(opts.policy, () => applyChangesCore(tasks, staffDB, selectedDate, resolver, windowDates, changes, opts));
+}
+
+function applyChangesCore(tasks, staffDB, selectedDate, resolver, windowDates, changes, options) {
   const {
-    now, frozenWindowMs = 3600000, stabilityWindowMs = 3 * 3600000,
+    frozenWindowMs = 3600000, stabilityWindowMs = 3 * 3600000,
     farReshuffle = false, escalate = true, weights, construction,
-    stability = STABILITY_MOVE_COST, escalateBudgetMs = 500, improveBudgetMs = 1500,
+    stability = STABILITY_MOVE_COST, escalateBudgetMs = SAFETY_NET_MS, improveBudgetMs = SAFETY_NET_MS,
+    escalateIterations = ESCALATE_ITERATIONS, improveMaxSteps = DEFAULT_IMPROVE_MAX_STEPS,
   } = options;
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   // Wall-clock per stage, returned for monitoring (the backend's latency budget).
   const ms = {};
   let tick = Date.now();
   const lap = name => { const t = Date.now(); ms[name] = t - tick; tick = t; };
+  const rejected = [];
+
+  let now;
+  let nowUnreadable = false;
+  if (options.now !== undefined && options.now !== null) {
+    now = toInstant(options.now);
+    if (!isValidDate(now)) { now = undefined; nowUnreadable = true; }
+  }
   const frozenBefore = now ? new Date(now.getTime() + frozenWindowMs) : undefined;
   const stabilityEnd = now ? new Date(now.getTime() + stabilityWindowMs) : undefined;
 
+  // 0. The plan as given: tasks without a usable id are set aside for good; a
+  //    task with an unusable time stays in the pool — a change may repair it —
+  //    and is set aside after the changes if it is still unusable.
+  const { tasks: baseNorm, skip: baseSkip } = normalizeTasks(tasks);
+  const aside = new Set();
+  for (const x of baseSkip) {
+    if (x.reason === 'NO_ID' || x.reason === 'DUPLICATE_ID' || x.reason === 'NOT_AN_OBJECT') {
+      aside.add(x.index);
+      rejected.push({ id: x.id, reason: x.reason, source: 'task' });
+    }
+  }
+  const byId = new Map();
+  baseNorm.forEach((t, i) => { if (!aside.has(i)) byId.set(t.id, t); });
+
+  // The finished plan in the original order: set-aside and unusable tasks open
+  // in their own places, new tasks after the old ones. (Nothing to rearrange
+  // when everything was usable — the common case.)
+  const removedIds = new Set();
+  const assemble = (computed, unusable) => {
+    if (aside.size === 0 && unusable.length === 0) return computed;
+    const computedById = new Map(computed.map(t => [t.id, t]));
+    const unusableById = new Map(unusable.map(t => [t.id, openCopy(t)]));
+    const out = [];
+    const placed = new Set();
+    baseNorm.forEach((t, i) => {
+      if (aside.has(i)) { if (!removedIds.has(t.id)) out.push(openCopy(t)); return; }
+      const f = computedById.get(t.id) ?? unusableById.get(t.id);
+      if (f) { out.push(f); placed.add(t.id); }
+    });
+    for (const f of computed) if (!placed.has(f.id)) out.push(f);
+    return out;
+  };
+
+  if (nowUnreadable) {
+    const changeList = Array.isArray(changes) ? changes : [];
+    rejected.push(...changeList.map(c => ({ id: c && typeof c === 'object' ? (c.id ?? null) : null, reason: 'BAD_NOW', source: 'change' })));
+    if (!Array.isArray(changes)) rejected.push({ id: null, reason: 'CHANGES_NOT_ARRAY', source: 'change' });
+    const usable = [], unusable = [];
+    for (const t of byId.values()) (taskProblem(t) ? unusable : usable).push(t);
+    for (const t of unusable) rejected.push({ id: t.id, reason: taskProblem(t), source: 'task' });
+    return {
+      tasks: assemble(usable, unusable), touched: [], changedIds: [], unplaced: [], repairs: [], escalated: false,
+      needsDecision: [], violations: validatePlan(usable, staffDB, selectedDate, resolver, dates), rejected,
+      timeCut: false, terminationReason: 'rejected', improveTermination: 'skipped',
+      work: { improveSteps: 0, escalateIterations: 0 }, ms,
+    };
+  }
+
   // 1. Apply the changes; remember which employees they touch.
-  const byId = new Map(tasks.map(t => [t.id, t]));
   const touched = new Set();
   const changedIds = new Set();
-  for (const c of changes) {
+  let batch = changes;
+  if (!Array.isArray(batch)) {
+    rejected.push({ id: null, reason: 'CHANGES_NOT_ARRAY', source: 'change' });
+    batch = [];
+  }
+  const reject = (c, reason) => rejected.push({ id: c && typeof c === 'object' ? (c.id ?? null) : null, reason, source: 'change' });
+  for (const c of batch) {
+    if (!c || typeof c !== 'object') { reject(c, 'BAD_CHANGE'); continue; }
+    if (c.id === undefined || c.id === null || c.id === '') { reject(c, 'NO_ID'); continue; }
     const old = byId.get(c.id);
-    if (old && old.employee !== 'Не назначено') touched.add(old.employee);
-    if (c.removed) { byId.delete(c.id); continue; }
-    byId.set(c.id, old
-      ? { ...old, ...c }
-      : { employee: 'Не назначено', isLocked: false, baseStart: c.start, baseEnd: c.end, ...c });
+    if (c.removed) {
+      if (old && old.employee !== OPEN_EMPLOYEE) touched.add(old.employee);
+      byId.delete(c.id);
+      removedIds.add(c.id);
+      continue;
+    }
+    // The supplied fields; one left undefined keeps the task's own value
+    // (spreading `undefined` over a field used to wipe it).
+    const fields = {};
+    for (const [k, v] of Object.entries(c)) if (v !== undefined) fields[k] = v;
+    let badTime = null;
+    for (const k of ['start', 'end', 'baseStart', 'baseEnd']) {
+      if (fields[k] === undefined) continue;
+      const d = toInstant(fields[k]);
+      if (!isValidDate(d)) { badTime = k === 'start' ? 'BAD_START' : k === 'end' ? 'BAD_END' : 'BAD_BASE_TIME'; break; }
+      fields[k] = d;
+    }
+    if (badTime) { reject(c, badTime); continue; }
+    const next = normalizeTask(old
+      ? { ...old, ...fields }
+      : { employee: OPEN_EMPLOYEE, isLocked: false, baseStart: fields.start, baseEnd: fields.end, ...fields });
+    const problem = taskProblem(next);
+    if (problem) {
+      reject(c, !old && (!isValidDate(next.start) || !isValidDate(next.end)) ? 'MISSING_TIMES' : problem);
+      continue;
+    }
+    if (old && old.employee !== OPEN_EMPLOYEE) touched.add(old.employee);
+    byId.set(c.id, next);
+    removedIds.delete(c.id);
     changedIds.add(c.id);
   }
-  let result = [...byId.values()];
+  const usable = [], unusable = [];
+  for (const t of byId.values()) (taskProblem(t) ? unusable : usable).push(t);
+  for (const t of unusable) rejected.push({ id: t.id, reason: taskProblem(t), source: 'task' });
+  let result = usable;
 
   // 2. An assignment its employee can no longer take goes back to open — not
   //    only for the tasks in the batch: staffDB is the current truth about who
@@ -1745,7 +2065,7 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
 
   // 3. (Optional) full free re-optimization beyond the stability window.
   if (farReshuffle) {
-    result = runOptimizer(result, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
+    result = runOptimizerCore(result, staffDB, selectedDate, resolver, dates, stabilityEnd, { weights, construction });
   }
 
   lap('prepare');
@@ -1775,6 +2095,7 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
   const improved = improveAssignment(result, staffDB, selectedDate, resolver, dates, {
     weights, frozenBefore, priorityUntil: stabilityEnd, moveCost,
     confirmRound: farReshuffle,
+    maxSteps: farReshuffle ? undefined : improveMaxSteps,
     deadline: farReshuffle ? undefined : Date.now() + improveBudgetMs,
     scopeEmployees: farReshuffle ? undefined : touched,
     scopeTaskIds: farReshuffle ? undefined : placeIds,
@@ -1788,13 +2109,18 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
   lap('improve');
   let finalTasks = improved.tasks;
   let escalated = false;
+  let timeCut = improved.timeCut;
+  let escalationIterations = 0;
   if (escalate && !farReshuffle && unplacedOf(finalTasks).length > 0) {
     // Targeted group moves around exactly the tasks still open, kept only
     // when they place more of them — not a rebuild of the rest of the day.
     const lns = lnsImprove(finalTasks, staffDB, selectedDate, resolver, dates, {
       weights, frozenBefore, coverageOnly: true, focusIds: unplacedOf(finalTasks),
-      timeBudgetMs: escalateBudgetMs, removeSizes: [4, 8, 16], destroyPeople: 4, stallIterations: 25,
+      timeBudgetMs: escalateBudgetMs, maxIterations: escalateIterations,
+      removeSizes: [4, 8, 16], destroyPeople: 4, stallIterations: 25,
     });
+    escalationIterations = lns.iterations;
+    if (lns.timeCut) timeCut = true;
     if (openIn(lns.tasks) < openIn(finalTasks)) { finalTasks = lns.tasks; escalated = true; }
   }
 
@@ -1805,7 +2131,7 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
   lap('check');
 
   return {
-    tasks: certified.tasks,
+    tasks: assemble(certified.tasks, unusable),
     touched: farReshuffle || escalated ? [] : improved.touched,
     changedIds: [...changedIds],
     unplaced: unplacedOf(certified.tasks),
@@ -1813,6 +2139,11 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
     escalated,
     needsDecision,
     violations: certified.remaining,
+    rejected,
+    timeCut,
+    terminationReason: timeCut ? 'deadline' : improved.terminationReason === 'max-steps' ? 'max-steps' : 'completed',
+    improveTermination: improved.terminationReason,
+    work: { improveSteps: improved.steps, escalateIterations: escalationIterations },
     ms,
   };
 }
@@ -1833,15 +2164,18 @@ export function applyChanges(tasks, staffDB, selectedDate, resolver, windowDates
 //   related  — tasks close in time to a random one, sharing who could do them
 //   random   — a few random movable tasks (control / diversity)
 //
-// options: timeBudgetMs (default 2000), maxIterations, seed (same seed + same
-// input = same result), frozenBefore (tasks starting earlier never move),
+// options: maxIterations (the limit that decides when it stops; default
+// DEFAULT_LNS_ITERATIONS), timeBudgetMs (a safety net only, default 30 s: a
+// search that hits it is reported with timeCut and is no longer reproducible),
+// seed (same seed + same input + same iterations = same result on any machine),
+// frozenBefore (tasks starting earlier never move),
 // weights, removeSizes (default [4, 8, 16]), destroyPeople (default 3),
 // focusDates (open tasks of these dates are targeted first), coverageOnly
 // (only try to place open tasks — focusIds, if given — and accept a change
 // only when it places more; used to repair a batch update without
 // reshuffling the plan for cost), stallIterations (stop after this many
 // attempts in a row without an accepted change).
-// Returns { tasks, iterations, accepted, terminationReason }.
+// Returns { tasks, iterations, accepted, terminationReason, timeCut }.
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
@@ -1855,7 +2189,7 @@ function mulberry32(seed) {
 
 export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
   const {
-    timeBudgetMs = 2000, maxIterations = Infinity, seed = 1, frozenBefore, weights,
+    timeBudgetMs = LNS_SAFETY_MS, maxIterations = DEFAULT_LNS_ITERATIONS, seed = 1, frozenBefore, weights,
     removeSizes = [4, 8, 16], destroyPeople = 3, focusDates, coverageOnly = false, focusIds,
     stallIterations = Infinity,
   } = options;
@@ -1863,7 +2197,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const staff = mergeStaffWindow(staffDB, dates);
   const result = tasks.map(t => ({ ...t }));
-  if (staff.length === 0) return { tasks: result, iterations: 0, accepted: 0, terminationReason: 'no-staff' };
+  if (staff.length === 0) return { tasks: result, iterations: 0, accepted: 0, terminationReason: 'no-staff', timeCut: false };
 
   const deadline = Date.now() + timeBudgetMs;
   const rnd = mulberry32(seed);
@@ -2065,7 +2399,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     for (const id of still) owner.delete(id);
     openSet = newOpen;
   }
-  if (iterations >= maxIterations) terminationReason = 'iterations';
+  if (iterations >= maxIterations && terminationReason === 'budget') terminationReason = 'iterations';
 
   const out = result.map(t => {
     if (!inWin(t) || !canMove(t)) return t;
@@ -2073,7 +2407,7 @@ export function lnsImprove(tasks, staffDB, selectedDate, resolver, windowDates, 
     const emp = n ?? OPEN;
     return emp === t.employee ? t : { ...t, employee: emp };
   });
-  return { tasks: out, iterations, accepted, terminationReason };
+  return { tasks: out, iterations, accepted, terminationReason, timeCut: terminationReason === 'deadline' };
 }
 
 // ── Lower bound on open tasks ───────────────────────────────────────────────
@@ -2180,16 +2514,43 @@ export function unassignedLowerBound(tasks, staffDB, selectedDate, windowDates, 
 // browser worker, its synchronous fallback and a future backend all run the
 // same pipeline: construction → improvement → bounded LNS → independent
 // check (anything it rejects goes back to the open list) → lower bound.
-// options: weights, lnsBudgetMs (default 3000; 0 skips LNS), seed,
+// options: weights, seed,
+// lnsIterations — LNS attempts (default DEFAULT_LNS_ITERATIONS; 0 skips LNS):
+//   the limit that decides when the search stops, so one input gives one plan
+//   on any machine;
+// lnsBudgetMs — a safety net in milliseconds (default 30 s), not the working
+//   limit; 0 skips LNS. If it fires, stats.timeCut is true and the result is
+//   not reproducible;
 // construction ('auto' default: the better of 'regret' and 'bestfit' after
-// construction; or either one explicitly).
+//   construction; or either one explicitly);
+// policy — the operating policy for this call (see DEFAULT_POLICY); omitted =
+//   the current one.
+// Tasks that cannot be calculated (no id, an unreadable time, end not after
+// start, a repeated id) take no part and come back open in their places;
+// stats.invalid says which and why.
 // Returns { tasks, stats } — stats has the open-task count after each stage,
-// timings, why each search stopped, any violations left (locked tasks only)
-// and the lower bound on open tasks.
-export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, options = {}) {
-  const { weights, lnsBudgetMs = 3000, seed = 1, lnsOptions, construction = 'auto' } = options;
+// timings, why each search stopped, any violations left (locked tasks only),
+// the lower bound on open tasks, timeCut / terminationReason ('deadline' when a
+// time safety net cut a search, else 'completed') and invalid.
+export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, options) {
+  const opts = options || {};
+  return runWithPolicy(opts.policy, () => planWindowCore(tasks, staffDB, selectedDate, resolver, windowDates, opts));
+}
+
+function planWindowCore(tasks, staffDB, selectedDate, resolver, windowDates, options) {
+  const {
+    weights, lnsIterations = DEFAULT_LNS_ITERATIONS, lnsBudgetMs = LNS_SAFETY_MS, seed = 1, lnsOptions,
+    construction = 'auto',
+  } = options;
   const dates = windowDates && windowDates.length > 0 ? windowDates : [selectedDate];
   const openIn = ts => ts.filter(t => dates.includes(t.date) && t.employee === 'Не назначено').length;
+  const { tasks: normalized, skip } = normalizeTasks(tasks);
+  if (skip.length > 0) {
+    const skipAt = new Set(skip.map(x => x.index));
+    tasks = normalized.filter((_, i) => !skipAt.has(i));
+  } else {
+    tasks = normalized;
+  }
   const ms = {};
   let t0 = Date.now();
   // 'auto': build with both constructions and carry on with the one that
@@ -2200,20 +2561,20 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
   let built, chosen = construction;
   if (construction === 'auto') {
     const openDayOf = ts => ts.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
-    const viaRegret = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'regret' });
-    const viaBestFit = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'bestfit' });
+    const viaRegret = runOptimizerCore(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'regret' });
+    const viaBestFit = runOptimizerCore(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction: 'bestfit' });
     const useBestFit = openDayOf(viaBestFit) < openDayOf(viaRegret);
     built = useBestFit ? viaBestFit : viaRegret;
     chosen = useBestFit ? 'bestfit' : 'regret';
   } else {
-    built = runOptimizer(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction });
+    built = runOptimizerCore(tasks, staffDB, selectedDate, resolver, dates, undefined, { weights, construction });
   }
   ms.build = Date.now() - t0; t0 = Date.now();
   const improved = improveAssignment(built, staffDB, selectedDate, resolver, dates, { weights });
   ms.improve = Date.now() - t0; t0 = Date.now();
-  const lns = lnsBudgetMs > 0
-    ? lnsImprove(improved.tasks, staffDB, selectedDate, resolver, dates, { weights, timeBudgetMs: lnsBudgetMs, seed, focusDates: [selectedDate], ...lnsOptions })
-    : { tasks: improved.tasks, iterations: 0, accepted: 0, terminationReason: 'skipped' };
+  const lns = lnsBudgetMs > 0 && lnsIterations > 0
+    ? lnsImprove(improved.tasks, staffDB, selectedDate, resolver, dates, { weights, timeBudgetMs: lnsBudgetMs, maxIterations: lnsIterations, seed, focusDates: [selectedDate], ...lnsOptions })
+    : { tasks: improved.tasks, iterations: 0, accepted: 0, terminationReason: 'skipped', timeCut: false };
   ms.lns = Date.now() - t0; t0 = Date.now();
   const certified = certifyPlan(lns.tasks, staffDB, selectedDate, resolver, dates);
   // The figures that matter are the selected day's: the neighbouring days are
@@ -2224,8 +2585,9 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
   const bound = unassignedLowerBound(dayTasks, staffDB, selectedDate, dates);
   ms.check = Date.now() - t0;
   const openDay = ts => ts.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
+  const timeCut = Boolean(improved.timeCut || lns.timeCut);
   return {
-    tasks: certified.tasks,
+    tasks: skip.length > 0 ? mergeSkipped(normalized, skip, certified.tasks) : certified.tasks,
     stats: {
       openDay: openDay(certified.tasks),
       tasksDay: certified.tasks.filter(t => t.date === selectedDate).length,
@@ -2234,6 +2596,9 @@ export function planWindow(tasks, staffDB, selectedDate, resolver, windowDates, 
       construction: chosen,
       improveTermination: improved.terminationReason,
       lns: { iterations: lns.iterations, accepted: lns.accepted, terminationReason: lns.terminationReason },
+      timeCut,
+      terminationReason: timeCut ? 'deadline' : 'completed',
+      invalid: summarizeSkipped(skip),
       reopenedByCheck: certified.reopened.length,
       waived: waivedAssignments(certified.tasks, staffDB, [selectedDate]).length,
       violations: certified.remaining,

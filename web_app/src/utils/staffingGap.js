@@ -6,7 +6,7 @@
 // in or extend, arrived at by actually re-running the optimizer with them
 // added — so the dispatcher sees a proposal that accounts for reshuffling
 // the whole day, not just a literal one-task-at-a-time patch.
-import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound, certifyPlan } from '../optimizer.js';
+import { hasAllQuals, runOptimizer, improveAssignment, unassignedLowerBound, certifyPlan, runWithPolicy } from '../optimizer.js';
 
 // Price of moving an already-assigned task while working in the open ones.
 // On real 01.09 (window 31.08-02.09): at 300 the plan reassigned 206 of the
@@ -232,7 +232,15 @@ function findCoverage(target, workingStaff, fullRoster, usedNames, allShiftsByPe
 //
 // Greedy and bounded (MAX_ACTIONS/MAX_ITERATIONS) — a proposal for the
 // dispatcher to review and accept, not a guaranteed-minimum solve.
-export function resolveStaffingWithCallIns({
+//
+// `policy` (optional) is the operating policy for this call (see DEFAULT_POLICY
+// in optimizer.js); omitted = the current one. The work runs under it and the
+// previous policy is put back afterwards.
+export function resolveStaffingWithCallIns(args) {
+  return runWithPolicy(args.policy, () => resolveStaffing(args));
+}
+
+function resolveStaffing({
   tasksDB, staffDB, targetDate, windowDates, fullRoster = [], allShiftsByPerson = new Map(), distanceResolver,
 }) {
   const dates = windowDates && windowDates.length > 0 ? windowDates : [targetDate];
