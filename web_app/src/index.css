@@ -4,3 +4,37 @@
 html, body {
   margin: 0;
 }
+
+/* Keyboard focus is always visible: a 2 px ring at least 3:1 against the
+   surface it sits on (#0958d9 on white 6.2:1, #69b1ff on the dark panels 8.2:1).
+   antd's own light-blue ring is 1.7:1 on white. The ring follows the theme the
+   page is in (the body carries data-theme, set from App). */
+:focus-visible {
+  outline: 2px solid #0958d9;
+  outline-offset: 2px;
+}
+body[data-theme='dark'] :focus-visible {
+  outline-color: #69b1ff;
+}
+/* antd draws its own focus shadow on buttons and switches; keep the ring ours. */
+.ant-btn:focus-visible,
+.ant-switch:focus-visible,
+.ant-checkbox-input:focus-visible + .ant-checkbox-inner,
+.ant-collapse-header:focus-visible {
+  outline: 2px solid #0958d9 !important;
+  outline-offset: 2px !important;
+}
+body[data-theme='dark'] .ant-btn:focus-visible,
+body[data-theme='dark'] .ant-switch:focus-visible,
+body[data-theme='dark'] .ant-checkbox-input:focus-visible + .ant-checkbox-inner,
+body[data-theme='dark'] .ant-collapse-header:focus-visible {
+  outline-color: #69b1ff !important;
+}
+
+/* Targets of at least 24 px (WCAG 2.5.8): the slider handle is 16 px drawn, with
+   a transparent 4 px margin on every side that takes the same pointer. */
+.ant-slider .ant-slider-handle::before {
+  inset: -4px !important;
+  width: auto !important;
+  height: auto !important;
+}

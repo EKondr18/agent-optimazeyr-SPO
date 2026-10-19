@@ -18,10 +18,13 @@ function toDatetimeLocalValue(d) {
   const pad = n => String(n).padStart(2, '0');
   return `${w.y}-${pad(w.mo)}-${pad(w.d)}T${pad(w.h)}:${pad(w.mi)}`;
 }
+// null for an empty or unreadable field (the browser gives '' when it is cleared).
 function fromDatetimeLocalValue(s) {
-  const [datePart, timePart] = s.split('T');
+  const [datePart, timePart] = String(s || '').split('T');
+  if (!datePart || !timePart) return null;
   const [h, min] = timePart.split(':').map(Number);
-  return new Date(dayStart(datePart).getTime() + (h * 60 + min) * 60000);
+  const d = new Date(dayStart(datePart).getTime() + (h * 60 + min) * 60000);
+  return Number.isFinite(d.getTime()) ? d : null;
 }
 
 const SEP = '—';
@@ -38,6 +41,7 @@ export default function GanttChart({
   const [editingTask, setEditingTask] = useState(null);
   const [editStart, setEditStart] = useState('');
   const [editEnd, setEditEnd] = useState('');
+  const [editError, setEditError] = useState('');
 
   // Which employees hold every qualification the currently-dragged backlog
   // task requires — used to highlight matching shifts and dim the rest.
@@ -231,7 +235,7 @@ export default function GanttChart({
           '<b>%{customdata.desc}</b><br>' +
           'Рейс: <b>%{customdata.flight}</b>  |  POS: %{customdata.pos}<br>' +
           'Время: %{customdata.start} – %{customdata.end}  (%{customdata.dur})<br>' +
-          'Квалификация: %{customdata.qual}  |  %{customdata.lock}<br>' +
+          'Допуск: %{customdata.qual}  |  %{customdata.lock}<br>' +
           'Клик — изменить время' +
           '<extra>%{customdata.emp}</extra>',
         marker: { color: colors, opacity: 0.9, line: barLine },
@@ -349,6 +353,7 @@ export default function GanttChart({
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
     setEditingTask(task);
+    setEditError('');
     setEditStart(toDatetimeLocalValue(task.start));
     setEditEnd(toDatetimeLocalValue(task.end));
   }
@@ -356,7 +361,8 @@ export default function GanttChart({
   function saveTimeEdit() {
     const newStart = fromDatetimeLocalValue(editStart);
     const newEnd = fromDatetimeLocalValue(editEnd);
-    if (newEnd <= newStart) return;
+    if (!newStart || !newEnd) { setEditError('Укажите и начало, и окончание.'); return; }
+    if (newEnd <= newStart) { setEditError('Окончание должно быть позже начала.'); return; }
     onEditTaskTime?.(editingTask.id, newStart, newEnd);
     setEditingTask(null);
   }
@@ -598,7 +604,7 @@ export default function GanttChart({
       </div>
 
       <Modal
-        title="Задача"
+        title={editingTask ? `Задача: ${editingTask.name}` : 'Задача'}
         open={!!editingTask}
         onCancel={() => setEditingTask(null)}
         footer={[
@@ -607,9 +613,8 @@ export default function GanttChart({
             danger
             disabled={editingTask?.employee === 'Не назначено'}
             onClick={() => { onUnassignTask?.(editingTask.id); setEditingTask(null); }}
-            style={{ float: 'left' }}
           >
-            Вернуть в бэклог
+            Вернуть в «Не назначено»
           </Button>,
           <Button key="cancel" onClick={() => setEditingTask(null)}>Отмена</Button>,
           <Button key="save" type="primary" onClick={saveTimeEdit}>Сохранить время</Button>,
@@ -617,7 +622,6 @@ export default function GanttChart({
       >
         {editingTask && (
           <div>
-            <Typography.Text strong>{editingTask.name}</Typography.Text>
             <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>
               <span title={editingTask.flight}>Рейс {shortFlight(editingTask.flight)}</span> · POS {editingTask.pos} · {editingTask.employee}
             </div>
@@ -654,6 +658,11 @@ export default function GanttChart({
                   }}
                 />
               </label>
+            </div>
+            {editError && <div role="alert" style={{ color: isDark ? '#ff7875' : '#cf1322', fontSize: 13, marginTop: 8 }}>{editError}</div>}
+            <div style={{ fontSize: 12, color: subColor, marginTop: 12 }}>
+              После сохранения расписание пересчитается: если исполнитель не успевает или выходит за смену, задачу
+              возьмёт другой сотрудник; если никого не найдётся — она вернётся в «Не назначено». Время — московское.
             </div>
           </div>
         )}

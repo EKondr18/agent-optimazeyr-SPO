@@ -20,11 +20,13 @@ import {
   applyChanges, planWindow, DEFAULT_WEIGHTS, DEFAULT_POLICY, setPolicy, findConflicts, hasAllQuals,
   fitsShift, requiredQuals, validatePlan, DEFAULT_LNS_ITERATIONS,
 } from './optimizer';
-import { dataQualityReport } from './utils/dataQuality';
+import { dataQualityReport, openTaskReasons } from './utils/dataQuality';
+import { sliceForWindow, mergeSlice } from './utils/windowSlice';
 import { dayKey, dayStart, addDays, daysBetween, fmtHM, fmtDM } from './utils/tz';
 import { rankQuals } from './utils/qualColors';
 import { countRu, pluralRu, shortFlight, mutedColor, statusColor } from './utils/uiFormat';
 import PlanReport from './components/PlanReport';
+import UnassignedWhy from './components/UnassignedWhy';
 import MetricsSummary from './components/MetricsSummary';
 import TaskDelayPanel from './components/TaskDelayPanel';
 
@@ -108,11 +110,21 @@ function FileDropzone({ label, isDark, status, onFile }) {
     reader.readAsText(file, 'UTF-8');
   }
 
+  const statusText = status?.error ? `ошибка: ${status.error}` : status?.filename ? `выбран ${status.filename}` : 'файл не выбран';
+  // Enter and Space open the file dialog like a click: the zone is a button.
+  const openOnKey = e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click(); }
+  };
+
   return (
     <div>
-      <div style={{ fontSize: 11, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 12, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`${label}: ${statusText}`}
         onClick={() => inputRef.current?.click()}
+        onKeyDown={openOnKey}
         onDragOver={e => { e.preventDefault(); setIsOver(true); }}
         onDragLeave={() => setIsOver(false)}
         onDrop={e => {
@@ -125,7 +137,7 @@ function FileDropzone({ label, isDark, status, onFile }) {
           borderRadius: 6,
           padding: '6px 8px',
           textAlign: 'center',
-          fontSize: 11,
+          fontSize: 12,
           cursor: 'pointer',
           background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
           color: mutedColor(isDark),
@@ -142,6 +154,8 @@ function FileDropzone({ label, isDark, status, onFile }) {
       <input
         ref={inputRef}
         type="file"
+        tabIndex={-1}
+        aria-hidden
         accept=".csv,.txt,.json"
         onChange={e => { readFile(e.target.files[0]); e.target.value = ''; }}
         style={{ display: 'none' }}
@@ -197,11 +211,21 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
     }
   }
 
+  const statusText = status?.error ? `ошибка: ${status.error}` : status?.filename ? `выбран ${status.filename}` : 'файл не выбран';
+  // Enter and Space open the file dialog like a click: the zone is a button.
+  const openOnKey = e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click(); }
+  };
+
   return (
     <div>
-      <div style={{ fontSize: 11, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 12, color: mutedColor(isDark), marginBottom: 2 }}>{label}</div>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`${label}: ${statusText}`}
         onClick={() => inputRef.current?.click()}
+        onKeyDown={openOnKey}
         onDragOver={e => { e.preventDefault(); setIsOver(true); }}
         onDragLeave={() => setIsOver(false)}
         onDrop={e => {
@@ -214,7 +238,7 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
           borderRadius: 6,
           padding: '6px 8px',
           textAlign: 'center',
-          fontSize: 11,
+          fontSize: 12,
           cursor: 'pointer',
           background: isOver ? (isDark ? '#112' : '#f0f7ff') : 'transparent',
           color: mutedColor(isDark),
@@ -231,10 +255,40 @@ function AuxDataDropzone({ label, isDark, status, onRows }) {
       <input
         ref={inputRef}
         type="file"
+        tabIndex={-1}
+        aria-hidden
         accept=".csv,.txt,.json,.xlsx,.xls"
         onChange={e => { readFile(e.target.files[0]); e.target.value = ''; }}
         style={{ display: 'none' }}
       />
+    </div>
+  );
+}
+
+// Small section caption of the sidebar.
+function SideCaption({ children, muted, style }) {
+  return (
+    <Text style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8, ...style }}>
+      {children}
+    </Text>
+  );
+}
+
+// A framed group of the sidebar: priorities and rules look alike but differ in
+// what they do (preferences vs hard limits), so each gets its own box and a note.
+function SideGroup({ title, note, isDark, muted, extra, children }) {
+  return (
+    <div
+      role="group"
+      aria-label={title}
+      style={{ border: `1px solid ${isDark ? '#2d2d2d' : '#e0e0e0'}`, borderRadius: 8, padding: '8px 10px', marginTop: 12 }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <Text strong style={{ fontSize: 13 }}>{title}</Text>
+        {extra}
+      </div>
+      <Text style={{ fontSize: 12, color: muted, display: 'block', marginBottom: 4 }}>{note}</Text>
+      {children}
     </div>
   );
 }
@@ -248,27 +302,55 @@ function SidebarContent({
   handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
   policy, setPolicyState, lnsIterations, setLnsIterations, qualOptions,
   filterTypes, allTaskTypes, toggleType, setFilterTypes,
+  loadKeys, setLoadKeys,
   onClose,
 }) {
   const { token } = antdTheme.useToken();
   const muted = mutedColor(isDark);
+  const csvChosen = JSON_FILE_SLOTS.filter(s => csvFiles[s.key]?.text && !csvFiles[s.key]?.error).length;
+  const csvMissing = JSON_FILE_SLOTS.filter(s => !(csvFiles[s.key]?.text && !csvFiles[s.key]?.error)).map(s => s.label);
+  const panelBg = isDark ? '#141414' : '#ffffff';
   return (
     <div style={{ padding: '0 12px 16px', height: '100%', overflowY: 'auto' }}>
       {/* Logo */}
-      <div style={{ padding: '16px 0 12px', borderBottom: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`, marginBottom: 16 }}>
+      <div style={{ padding: '16px 0 12px', borderBottom: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}`, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 20 }}>🛫</span>
           <div>
             {/* The theme's own text color: without it the title is black on the dark panel. */}
             <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.3, color: token.colorText }}>Пульт КК — Внуково</div>
-            <div style={{ fontSize: 11, color: muted }}>SPO оптимизатор SV+GH</div>
+            <div style={{ fontSize: 12, color: muted }}>SPO оптимизатор SV+GH</div>
           </div>
         </div>
       </div>
 
-      {/* Data loading */}
-      <div style={{ marginBottom: 16 }}>
-        <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Данные</Text>
+      {/* The two things needed for every calculation stay at the top while the
+          rest of the panel scrolls: the date and the start button. */}
+      {hasData && (
+        <div style={{ position: 'sticky', top: 0, zIndex: 5, background: panelBg, paddingBottom: 10, marginBottom: 4, borderBottom: `1px solid ${isDark ? '#2d2d2d' : '#f0f0f0'}` }}>
+          <SideCaption muted={muted} style={{ marginBottom: 4 }}>Дата смены</SideCaption>
+          <Select
+            value={selectedDate}
+            onChange={setSelectedDate}
+            style={{ width: '100%', marginBottom: 8 }}
+            aria-label="Дата смены"
+            options={availableDates.map(d => ({ value: d, label: datesWithShifts.has(d) ? d : `${d} (нет смен)` }))}
+          />
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            block
+            loading={busy}
+            onClick={() => { handleRunOptimizer(); onClose?.(); }}
+          >
+            Запустить оптимизатор
+          </Button>
+        </div>
+      )}
+
+      {/* Data loading: folded away once the data is in */}
+      <div style={{ margin: '12px 0 4px' }}>
+        <SideCaption muted={muted}>Данные</SideCaption>
         <input ref={fileRef} type="file" accept=".csv,.txt" onChange={e => { handleFileUpload(e); onClose?.(); }} style={{ display: 'none' }} />
         <Space direction="vertical" style={{ width: '100%' }}>
           <Button icon={<UploadOutlined />} block onClick={() => fileRef.current?.click()}>
@@ -280,6 +362,8 @@ function SidebarContent({
           ghost
           size="small"
           style={{ marginTop: 8 }}
+          activeKey={loadKeys}
+          onChange={keys => setLoadKeys(Array.isArray(keys) ? keys : [keys])}
           items={[{
             key: 'manual-json',
             label: <span style={{ fontSize: 12 }}>📦 Загрузить JSON вручную (6 файлов)</span>,
@@ -289,18 +373,19 @@ function SidebarContent({
                   const slot = manualFiles[key];
                   return (
                     <div key={key}>
-                      <div style={{ fontSize: 11, color: muted, marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontSize: 12, color: muted, marginBottom: 2 }}>{label}</div>
                       <input
                         type="file"
                         accept=".json,.txt"
+                        aria-label={label}
                         onChange={e => handleManualFileChange(key, e)}
-                        style={{ fontSize: 11, width: '100%' }}
+                        style={{ fontSize: 12, width: '100%' }}
                       />
                       {slot?.error && (
-                        <div style={{ fontSize: 11, color: statusColor(isDark, 'danger') }}>Ошибка: {slot.error}</div>
+                        <div style={{ fontSize: 12, color: statusColor(isDark, 'danger') }}>Ошибка: {slot.error}</div>
                       )}
                       {slot?.data && !slot.error && (
-                        <div style={{ fontSize: 11, color: statusColor(isDark, 'success') }}>✓ {slot.filename} ({slot.data.length})</div>
+                        <div style={{ fontSize: 12, color: statusColor(isDark, 'success') }}>✓ {slot.filename} ({slot.data.length})</div>
                       )}
                     </div>
                   );
@@ -325,6 +410,7 @@ function SidebarContent({
             label: <span style={{ fontSize: 12 }}>📄 Загрузить CSV вручную (6 файлов)</span>,
             children: (
               <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                <Text strong style={{ fontSize: 13 }} aria-live="polite">Файлы выгрузки: выбрано {csvChosen} из {JSON_FILE_SLOTS.length}</Text>
                 {JSON_FILE_SLOTS.map(({ key, label }) => (
                   <FileDropzone
                     key={key}
@@ -347,6 +433,9 @@ function SidebarContent({
                     Очистить
                   </Button>
                 </Space>
+                {!csvAllReady && (
+                  <Text style={{ fontSize: 12, color: muted }}>Не хватает: {csvMissing.join(', ')}</Text>
+                )}
               </Space>
             ),
           }, {
@@ -366,7 +455,7 @@ function SidebarContent({
                   status={travelGraphFile}
                   onRows={handleTravelGraphRows}
                 />
-                <Text style={{ fontSize: 11, color: muted }}>
+                <Text style={{ fontSize: 12, color: muted }}>
                   Улучшает расчёт расстояний/времени перехода между стоянками в оптимизаторе. Без этих файлов используется упрощённая эвристика по коду стоянки.
                 </Text>
               </Space>
@@ -377,131 +466,120 @@ function SidebarContent({
 
       {hasData && (
         <>
-          <Divider style={{ margin: '8px 0' }} />
+          <Button
+            icon={<ClearOutlined />}
+            block
+            style={{ marginTop: 8 }}
+            onClick={() => { handleResetBacklog(); onClose?.(); }}
+          >
+            Сбросить назначения дня
+          </Button>
 
-          {/* Date selector */}
-          <div style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Дата смены</Text>
-            <Select
-              value={selectedDate}
-              onChange={setSelectedDate}
-              style={{ width: '100%' }}
-              options={availableDates.map(d => ({ value: d, label: datesWithShifts.has(d) ? d : `${d} (нет смен)` }))}
-            />
-          </div>
-
-          {/* Optimizer */}
-          <div style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted, display: 'block', marginBottom: 8 }}>Оптимизация</Text>
-            <Space direction="vertical" style={{ width: '100%' }}>
+          {/* Preferences: how the optimizer weighs its aims. Each slider is a
+              multiplier on the default weight (DEFAULT_WEIGHTS), so "1" is always
+              "as shipped" whatever that weight currently is. */}
+          <SideGroup
+            title="Приоритеты"
+            note="предпочтения: множитель к обычному весу (1 = по умолчанию)"
+            isDark={isDark}
+            muted={muted}
+            extra={(
               <Button
-                type="primary"
-                icon={<ThunderboltOutlined />}
-                block
-                loading={busy}
-                onClick={() => { handleRunOptimizer(); onClose?.(); }}
+                type="link"
+                size="small"
+                style={{ padding: 0, fontSize: 12 }}
+                onClick={() => setOptPriorities({ load: 1, walk: 1, slack: 1, overtime: 1 })}
               >
-                Запустить оптимизатор
+                сбросить
               </Button>
-              <Button
-                icon={<ClearOutlined />}
-                block
-                onClick={() => { handleResetBacklog(); onClose?.(); }}
-              >
-                Сбросить в бэклог
-              </Button>
-            </Space>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, color: muted }}>Приоритеты (1 = по умолчанию)</Text>
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ padding: 0, fontSize: 11 }}
-                  onClick={() => setOptPriorities({ load: 1, walk: 1, slack: 1, overtime: 1 })}
-                >
-                  сбросить
-                </Button>
-              </div>
-              {[
-                ['load', 'Ровная нагрузка'],
-                ['walk', 'Меньше ходьбы'],
-                ['slack', 'Запас по времени'],
-                ['overtime', 'Меньше сверхурочных'],
-              ].map(([key, label]) => (
-                <div key={key} style={{ marginTop: 4 }}>
-                  <Text style={{ fontSize: 12 }}>{label}</Text>
-                  <Slider
-                    min={0}
-                    max={3}
-                    step={0.5}
-                    value={optPriorities[key]}
-                    onChange={v => setOptPriorities(prev => ({ ...prev, [key]: v }))}
-                    style={{ margin: '2px 6px 0' }}
-                  />
+            )}
+          >
+            {[
+              ['load', 'Ровная нагрузка'],
+              ['walk', 'Меньше ходьбы'],
+              ['slack', 'Запас по времени'],
+              ['overtime', 'Меньше сверхурочных'],
+            ].map(([key, label]) => (
+              <div key={key} style={{ marginTop: 4 }} title={`Обычный вес — ${DEFAULT_WEIGHTS[key]}; сейчас ×${optPriorities[key]} = ${DEFAULT_WEIGHTS[key] * optPriorities[key]}. 0 — этот приоритет не учитывается.`}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 13 }}>{label}</Text>
+                  <Text style={{ fontSize: 13, color: muted }}>×{optPriorities[key]}</Text>
                 </div>
-              ))}
-            </div>
+                <Slider
+                  min={0}
+                  max={3}
+                  step={0.5}
+                  value={optPriorities[key]}
+                  onChange={v => setOptPriorities(prev => ({ ...prev, [key]: v }))}
+                  tooltip={{ open: false }}
+                  aria-label={label}
+                  style={{ margin: '2px 6px 0' }}
+                />
+              </div>
+            ))}
+          </SideGroup>
 
-            {/* Operating rules: hard limits, not preferences */}
-            <div style={{ marginTop: 12 }}>
-              <Text style={{ fontSize: 11, color: muted }}>Правила (жёсткие ограничения)</Text>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
-                <Text style={{ fontSize: 12 }} title="До скольких минут после конца смены сотрудник может задержаться, чтобы закончить начатую в смену задачу">
-                  Допустимая переработка, мин
-                </Text>
-                <InputNumber
-                  size="small" min={0} max={240} step={15} style={{ width: 72 }}
-                  value={policy.maxOvertimeMin}
-                  onChange={v => setPolicyState(p => ({ ...p, maxOvertimeMin: v ?? 0 }))}
-                />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
-                <Text style={{ fontSize: 12 }} title="Разрешить одному сотруднику две пересекающиеся по времени задачи одного рейса на одной стоянке с разными названиями (например, OUT_1 и OUT_2)">
-                  Параллельные задачи одного рейса
-                </Text>
-                <Switch
-                  size="small"
-                  checked={policy.sameFlightOverlap}
-                  onChange={v => setPolicyState(p => ({ ...p, sameFlightOverlap: v }))}
-                />
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <Text style={{ fontSize: 12 }} title="Задачи с этими допусками будут назначаться и без них — только если так решено (например, ни у кого в справочнике нет допуска). Каждое такое назначение показывается в отчёте">
-                  Назначать без допуска
-                </Text>
-                <Select
-                  mode="multiple" size="small" allowClear style={{ width: '100%', marginTop: 2 }}
-                  placeholder="нет — все допуски обязательны"
-                  value={policy.waivedQuals}
-                  onChange={v => setPolicyState(p => ({ ...p, waivedQuals: v }))}
-                  options={qualOptions}
-                />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
-                <Text style={{ fontSize: 12 }} title="Сколько попыток дополнительного поиска перестановок групп задач (LNS) делать после основного прохода. 0 — не искать. Число попыток, а не секунды: одинаковые данные дают одинаковый план на любом компьютере (≈200 попыток — около 3 секунд)">
-                  Доп. поиск (LNS), попыток
-                </Text>
-                <InputNumber
-                  size="small" min={0} max={1000} step={50} style={{ width: 72 }}
-                  value={lnsIterations}
-                  onChange={v => setLnsIterations(v ?? 0)}
-                />
-              </div>
+          {/* Operating rules: hard limits, not preferences */}
+          <SideGroup
+            title="Правила"
+            note="жёсткие, меняют результат"
+            isDark={isDark}
+            muted={muted}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+              <Text style={{ fontSize: 13 }} title="До скольких минут после конца смены сотрудник может задержаться, чтобы закончить начатую в смену задачу">
+                Допустимая переработка, мин
+              </Text>
+              <InputNumber
+                size="small" min={0} max={240} step={15} style={{ width: 72 }}
+                value={policy.maxOvertimeMin}
+                onChange={v => setPolicyState(p => ({ ...p, maxOvertimeMin: v ?? 0 }))}
+              />
             </div>
-          </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+              <Text style={{ fontSize: 13 }} title="Разрешить одному сотруднику две пересекающиеся по времени задачи одного рейса на одной стоянке с разными названиями (например, OUT_1 и OUT_2)">
+                Параллельные задачи одного рейса
+              </Text>
+              <Switch
+                checked={policy.sameFlightOverlap}
+                aria-label="Параллельные задачи одного рейса"
+                onChange={v => setPolicyState(p => ({ ...p, sameFlightOverlap: v }))}
+              />
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <Text style={{ fontSize: 13 }} title="Задачи с этими допусками будут назначаться и без них — только если так решено (например, ни у кого в справочнике нет допуска). Каждое такое назначение показывается в отчёте">
+                Назначать без допуска
+              </Text>
+              <Select
+                mode="multiple" size="small" allowClear style={{ width: '100%', marginTop: 2 }}
+                placeholder="нет — все допуски обязательны"
+                value={policy.waivedQuals}
+                onChange={v => setPolicyState(p => ({ ...p, waivedQuals: v }))}
+                options={qualOptions}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
+              <Text style={{ fontSize: 13 }} title="Сколько попыток дополнительного поиска перестановок групп задач делать после основного прохода. 0 — не искать. Число попыток, а не секунды: одинаковые данные дают одинаковый план на любом компьютере (≈200 попыток — около 3 секунд)">
+                Доп. поиск, попыток
+              </Text>
+              <InputNumber
+                size="small" min={0} max={1000} step={50} style={{ width: 72 }}
+                value={lnsIterations}
+                onChange={v => setLnsIterations(v ?? 0)}
+              />
+            </div>
+          </SideGroup>
 
-          <Divider style={{ margin: '8px 0' }} />
+          <Divider style={{ margin: '12px 0 8px' }} />
 
           {/* Task type filter */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: muted }}>Типы задач</Text>
+              <SideCaption muted={muted} style={{ marginBottom: 0 }}>Типы задач</SideCaption>
               <Button
                 type="link"
                 size="small"
-                style={{ padding: 0, fontSize: 11 }}
+                style={{ padding: 0, fontSize: 12 }}
                 onClick={() => setFilterTypes(
                   filterTypes.length === allTaskTypes.length ? [] : [...allTaskTypes]
                 )}
@@ -509,13 +587,13 @@ function SidebarContent({
                 {filterTypes.length === allTaskTypes.length ? 'Снять все' : 'Выбрать все'}
               </Button>
             </div>
-            <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
               {allTaskTypes.map(name => (
                 <Checkbox
                   key={name}
                   checked={filterTypes.includes(name)}
                   onChange={() => toggleType(name)}
-                  style={{ marginInlineStart: 0 }}
+                  style={{ marginInlineStart: 0, minHeight: 28, alignItems: 'center' }}
                 >
                   <span style={{ fontSize: 12 }} title={name}>{name}</span>
                 </Checkbox>
@@ -532,6 +610,10 @@ export default function App() {
   const [tasksDB, setTasksDB] = useState([]);
   const [staffDB, setStaffDB] = useState({});
   const [fullRoster, setFullRoster] = useState([]);
+  // What the loader skipped (rows of orders/shifts and why), for the data report.
+  const [loadReport, setLoadReport] = useState(null);
+  // Open blocks of the sidebar's "Данные" section; they fold after a successful load.
+  const [loadKeys, setLoadKeys] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
   const [filterTypes, setFilterTypes] = useState([]);
   const [filterFlight, setFilterFlight] = useState('');
@@ -603,6 +685,7 @@ export default function App() {
   useEffect(() => {
     document.body.style.background = isDark ? '#0d0d0d' : '#f5f5f5';
     document.body.style.margin = '0';
+    document.body.dataset.theme = isDark ? 'dark' : 'light'; // the focus ring's colour follows it (index.css)
   }, [isDark]);
 
   const availableDates = useMemo(
@@ -627,9 +710,9 @@ export default function App() {
   // What in the loaded data makes tasks unassignable regardless of the
   // optimizer. Depends only on the data's shape, not on assignments.
   const dataQuality = useMemo(
-    () => (tasksDB.length ? dataQualityReport({ tasks: tasksDB, staffDB, fullRoster }) : null),
+    () => (tasksDB.length ? dataQualityReport({ tasks: tasksDB, staffDB, fullRoster, loadReport }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasksDB.length, staffDB, fullRoster]
+    [tasksDB.length, staffDB, fullRoster, loadReport]
   );
   const currentTasks = useMemo(
     () => tasksDB.filter(t => t.date === selectedDate),
@@ -691,6 +774,16 @@ export default function App() {
   const backlogTasksAll = useMemo(
     () => tasksDB.filter(t => t.employee === 'Не назначено'),
     [tasksDB]
+  );
+
+  // Why each open task of the day is open — only worth computing once the
+  // optimizer has run for the date (before that every task is open).
+  const reasonsStamp = tasksDB; // recomputed whenever the schedule changes
+  const openReasons = useMemo(
+    () => (planStats && planStats.selectedDate === selectedDate
+      ? openTaskReasons(reasonsStamp, staffDB, selectedDate, distanceResolver, windowDates)
+      : null),
+    [reasonsStamp, staffDB, selectedDate, distanceResolver, windowDates, planStats]
   );
 
   // Full shift history per employee across every loaded date (not just the
@@ -767,13 +860,15 @@ export default function App() {
   // nobody in the loaded data holds a given qualification at all.
   const futureBacklogTasks = futureResolution?.unresolved ?? [];
 
-  function applyParsedData({ tasks, staffDB: db, fullRoster: roster }) {
+  function applyParsedData({ tasks, staffDB: db, fullRoster: roster, loadReport: report }) {
     const dates = [...new Set(tasks.map(t => t.date))].sort();
     const types = [...new Set(tasks.map(t => t.name))];
     setTasksDB(tasks);
     setStaffDB(db);
     setFullRoster(roster || []);
+    setLoadReport(report ?? null);
     setPlanStats(null);
+    setLoadKeys([]); // the upload blocks fold away: the date and the start button come first now
     // Open on the first day that has both tasks and shifts — the first task
     // date alone may have nobody on shift, which leaves the optimizer idle.
     setSelectedDate(dates.find(d => (db[d] || []).length > 0) ?? dates[0]);
@@ -941,23 +1036,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Only the tasks that can affect the job's window go to the worker (copying
+  // the whole export both ways cost more than the calculation of a small
+  // change); the answer's tasks are put back into the full list, the rest of
+  // which stays as it was.
+  function sliceJob(kind, payload) {
+    if (kind === 'gap') {
+      const a = payload.args;
+      const { sent, whole } = sliceForWindow(a.tasksDB, [...(a.windowDates || []), a.targetDate]);
+      if (whole) return { payload, total: sent.length, sent: sent.length, merge: r => r };
+      return {
+        payload: { ...payload, args: { ...a, tasksDB: sent } }, total: a.tasksDB.length, sent: sent.length,
+        merge: r => ({
+          ...r,
+          tasks: mergeSlice(a.tasksDB, sent, r.tasks),
+          baselineTasks: mergeSlice(a.tasksDB, sent, r.baselineTasks),
+        }),
+      };
+    }
+    const { sent, whole } = sliceForWindow(payload.tasks, payload.windowDates, (payload.changes || []).map(c => c?.id));
+    if (whole) return { payload, total: sent.length, sent: sent.length, merge: r => r };
+    return {
+      payload: { ...payload, tasks: sent }, total: payload.tasks.length, sent: sent.length,
+      merge: r => ({ ...r, tasks: mergeSlice(payload.tasks, sent, r.tasks) }),
+    };
+  }
+
   // Runs a heavy optimizer job in the worker and resolves with its result.
   function runJob(kind, payload) {
     const resolverRows = distanceResolver
       ? { locations: locationsFile?.rows || [], travelEdges: travelGraphFile?.rows || [] }
       : null;
-    const full = { ...payload, policy, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
     const w = startWorker();
     if (!w) return runJobHere(kind, payload);
+    const sliced = sliceJob(kind, payload);
+    const full = { ...sliced.payload, policy, resolverRows, resolverKey: `${rowsId(locationsFile?.rows)}|${rowsId(travelGraphFile?.rows)}` };
     const id = ++jobSeq.current;
     jobsInFlight.current++;
+    const t0 = performance.now();
     return new Promise((resolve, reject) => {
       const onMessage = e => {
         if (e.data.id !== id) return;
         w.removeEventListener('message', onMessage);
         w.removeEventListener('error', onError);
         jobsInFlight.current--;
-        if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.result);
+        console.debug(`[job] ${kind}: ${sliced.sent} of ${sliced.total} tasks sent, ${Math.round(performance.now() - t0)} ms`);
+        if (e.data.error) reject(new Error(e.data.error)); else resolve(sliced.merge(e.data.result));
       };
       const onError = e => {
         w.removeEventListener('message', onMessage);
@@ -1005,13 +1129,20 @@ export default function App() {
       const inWin = improved.filter(t => windowDates.includes(t.date));
       const placed = inWin.filter(t => t.employee !== 'Не назначено').length;
       if (placed === 0 && inWin.length > 0) {
-        message.warning('Ни одна задача не назначена: ни у кого из сотрудников на смене нет нужных квалификаций. Проверьте квалификации сотрудников (справочники).');
+        message.warning('Ни одна задача не назначена: ни у кого из сотрудников на смене нет нужных допусков. Проверьте допуски сотрудников (справочники).');
       }
     } catch (err) {
       message.error('Не удалось запустить оптимизатор: ' + err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // Entries the core set aside (repeated id, unreadable or inverted time): said
+  // out loud instead of silently dropped from the calculation.
+  function warnRejected(rejected) {
+    if (!rejected || rejected.length === 0) return;
+    message.warning(`Исключено из расчёта: ${countRu(rejected.length, 'запись', 'записи', 'записей')} (дубли, некорректное время или id) — проверьте данные`, 8);
   }
 
   function handleResetBacklog() {
@@ -1083,6 +1214,7 @@ export default function App() {
       return;
     }
     const { tasks: resolved, repairs, needsDecision = [] } = outcome;
+    warnRejected(outcome.rejected);
     // Looked up by id once: a find() per task made this step quadratic, and it
     // froze the page for seconds on a full export.
     const resolvedById = new Map(resolved.map(t => [t.id, t]));
@@ -1094,7 +1226,7 @@ export default function App() {
 
     for (const c of repairs) {
       if (c.backlog) {
-        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников нет даже с перетасовкой, задача возвращена в бэклог`);
+        message.warning(`«${c.taskName}» (${c.from}): из-за задержки конфликтует с другой задачей — свободных сотрудников нет даже с перетасовкой, задача возвращена в «Не назначено»`);
       } else if (c.viaBump) {
         message.info(`«${c.taskName}»: подвинута с ${c.from} на ${c.to}, чтобы освободить место для задачи из-за задержки`);
       } else {
@@ -1155,6 +1287,10 @@ export default function App() {
     const ext = resolution.actions.filter(a => a.type === 'extend').length;
     const calls = resolution.actions.filter(a => a.type === 'callin').length;
     const eased = resolution.actions.filter(a => a.tier === 'tight' || a.tier === 'forced').length;
+    // The plan is for the selected day: how many of ITS open tasks it closes.
+    const dayOpenNow = tasksDB.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
+    const dayOpenAfter = resolution.tasks.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
+    const closes = Math.max(0, dayOpenNow - dayOpenAfter);
     const startedFrom = tasksDB;
     const startedStaff = staffDB;
     modal.confirm({
@@ -1164,6 +1300,10 @@ export default function App() {
       cancelText: 'Отмена',
       content: (
         <div>
+          <p style={{ marginBottom: 8 }}>
+            <b>Закроет {closes} из {dayOpenNow} не назначенных задач дня</b>
+            {dayOpenAfter > 0 && <> (останутся без исполнителя: {dayOpenAfter})</>}.
+          </p>
           <p style={{ marginBottom: 8 }}>
             Будет изменено: {countRu(ext, 'смена', 'смены', 'смен')}; вызвано: {countRu(calls, 'человек', 'человека', 'человек')}.
           </p>
@@ -1185,8 +1325,9 @@ export default function App() {
         // The report under the metrics must say what is still wrong after the
         // plan, not what was wrong after the optimizer's own run.
         setPlanStats(prev => (prev && prev.selectedDate === selectedDate ? { ...prev, violations: after } : prev));
-        const open = resolution.tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено').length;
-        const done = `План применён: ${countRu(resolution.actions.length, 'изменение', 'изменения', 'изменений')} смен. Без исполнителя осталось ${open}.`;
+        // The day's figure, the same as the "Не назначено" tile — not the window's.
+        const open = resolution.tasks.filter(t => t.date === selectedDate && t.employee === 'Не назначено').length;
+        const done = `План применён: ${countRu(resolution.actions.length, 'изменение', 'изменения', 'изменений')} смен. Не назначено за день: ${open}.`;
         if (after.length > 0) {
           message.warning(`${done} Остаются ${after.length} ${pluralRu(after.length, 'нарушение', 'нарушения', 'нарушений')} правил у закреплённых вручную задач (они были до плана) — см. «Результат оптимизации».`, 8);
         } else {
@@ -1262,15 +1403,23 @@ export default function App() {
         options: { weights: optWeights, escalate: false },
       });
       if (tasksRef.current !== startedFrom) return;
+      warnRejected(out.rejected);
       setTasksDB(out.tasks);
       if (out.unplaced.includes(taskId)) {
-        message.warning('С новым временем задачу некому выполнить — она возвращена в бэклог');
+        message.warning('С новым временем задачу некому выполнить — она возвращена в «Не назначено»');
       }
     } catch (err) {
       message.error('Не удалось изменить время: ' + err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // Opens a panel (if closed) and brings it into view — the actions of the
+  // "Не назначено и почему" card.
+  function showPanel(key) {
+    setOpenPanels(prev => (prev.includes(key) ? prev : [...prev, key]));
+    setTimeout(() => document.querySelector(`.panel-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
   }
 
   function toggleType(name) {
@@ -1290,6 +1439,7 @@ export default function App() {
     handleRunOptimizer, handleResetBacklog, optPriorities, setOptPriorities, busy,
     policy, setPolicyState, lnsIterations, setLnsIterations, qualOptions,
     filterTypes, allTaskTypes, toggleType, setFilterTypes,
+    loadKeys, setLoadKeys,
   };
 
   // White text on the header needs ~6:1 on the light theme (#1677ff gave 4.1:1).
@@ -1321,13 +1471,16 @@ export default function App() {
     return best ? best.d : null;
   }, [selectedDate, datesWithShifts]);
 
+  const dayLabel = selectedDate ? fmtDM(dayStart(selectedDate)) : '';
+  const futureLabel = futureDate ? fmtDM(dayStart(futureDate)) : '';
   const collapseItems = hasData && !isLoading ? [
     {
       key: 'gantt',
+      className: 'panel-gantt',
       label: (
         <span style={{ fontWeight: 600 }}>
           <BarChartOutlined style={{ marginRight: 8 }} />
-          План на {fmtDM(dayStart(selectedDate))}: {currentTasks.length} задач (в окне ±1 сутки — {ganttTasks.length})
+          План на {dayLabel}: {currentTasks.length} задач (в окне ±1 сутки — {ganttTasks.length})
         </span>
       ),
       children: (
@@ -1380,10 +1533,11 @@ export default function App() {
     },
     {
       key: 'backlog',
+      className: 'panel-backlog',
       label: (
         <span style={{ fontWeight: 600 }}>
           <UnorderedListOutlined style={{ marginRight: 8 }} />
-          Нераспределённые задачи
+          Не назначено за {dayLabel}
           {backlogBadge}
         </span>
       ),
@@ -1409,10 +1563,11 @@ export default function App() {
     },
     {
       key: 'delays',
+      className: 'panel-delays',
       label: (
         <span style={{ fontWeight: 600 }}>
           <ClockCircleOutlined style={{ marginRight: 8 }} />
-          Модуль задержки задач
+          Сдвиг времени задач за {dayLabel}
         </span>
       ),
       children: (
@@ -1425,10 +1580,11 @@ export default function App() {
     },
     {
       key: 'load',
+      className: 'panel-load',
       label: (
         <span style={{ fontWeight: 600 }}>
           <RiseOutlined style={{ marginRight: 8 }} />
-          График нагрузки и потребности штата
+          График нагрузки и потребности штата на {dayLabel}: {currentTasks.length} задач
         </span>
       ),
       children: (
@@ -1443,7 +1599,7 @@ export default function App() {
             qualOrder={qualOrder}
           />
           <Divider style={{ margin: '20px 0' }} />
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>Нераспределённые задачи (бэклог)</Text>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Не назначено (все даты)</Text>
           <HourlyLoadChart
             tasks={backlogTasksAll}
             selectedDate={selectedDate}
@@ -1457,10 +1613,11 @@ export default function App() {
     },
     {
       key: 'staffing-gap',
+      className: 'panel-staffing-gap',
       label: (
         <span style={{ fontWeight: 600 }}>
           <TeamOutlined style={{ marginRight: 8 }} />
-          Нехватка персонала
+          Нехватка персонала и план вызова на {dayLabel}
           {backlogBadge}
         </span>
       ),
@@ -1486,10 +1643,11 @@ export default function App() {
     },
     {
       key: 'strategic',
+      className: 'panel-strategic',
       label: (
         <span style={{ fontWeight: 600 }}>
           <ScheduleOutlined style={{ marginRight: 8 }} />
-          Стратегическое планирование (сутки {futureDate})
+          Стратегическое планирование: прогноз на {futureLabel}
         </span>
       ),
       children: !strategicOpen ? null : !futureResolution ? (
@@ -1504,7 +1662,7 @@ export default function App() {
             showIcon
             style={{ marginBottom: 16 }}
             message="Предварительный план на завтра"
-            description="Задачи на этот день ещё не распределены реально — оптимизатор заранее раскидывает их по сменам и квалификациям, а всё, что не закрылось имеющимися сменами, дополнительно закрывается планом вызова/продления смен ниже. Поэтому по итогу здесь не должно оставаться нераспределённых задач, кроме тех, где вообще ни у кого нет нужной квалификации — такие показаны отдельно и промаркированы, за счёт кого и на каких условиях распределено остальное."
+            description="Задачи на этот день ещё не распределены реально — оптимизатор заранее раскидывает их по сменам и допускам, а всё, что не закрылось имеющимися сменами, дополнительно закрывается планом вызова/продления смен ниже. Поэтому здесь не должно оставаться не назначенных задач, кроме тех, где вообще ни у кого нет нужного допуска — такие показаны отдельно."
           />
           {futureResolution && futureResolution.actions.length > 0 && (
             <Alert
@@ -1512,7 +1670,7 @@ export default function App() {
               showIcon
               style={{ marginBottom: 16 }}
               message={`Задействовано ${futureResolution.actions.length} доп. чел. (вызов/продление смены)`}
-              description="Без них часть задач ниже осталась бы в бэклоге — состав и условия по каждому смотрите в «Нехватка персонала и план вызова» ниже."
+              description="Без них часть задач ниже осталась бы не назначенной — состав и условия по каждому смотрите в «Нехватка персонала и план вызова» ниже."
             />
           )}
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Все задачи (с учётом плана вызова)</Text>
@@ -1526,7 +1684,7 @@ export default function App() {
           />
           <Divider style={{ margin: '20px 0' }} />
           <Text strong style={{ display: 'block', marginBottom: 8 }}>
-            Осталось нераспределено (даже с учётом вызова/продления смен)
+            Осталось не назначено (даже с учётом вызова/продления смен)
           </Text>
           <HourlyLoadChart
             tasks={futureBacklogTasks}
@@ -1573,6 +1731,9 @@ export default function App() {
           colorTextTertiary: mutedTxt,
           colorTextPlaceholder: isDark ? '#8c8c8c' : '#767676',
         },
+        // antd's slider handle is 10 px; a hand needs more to hit (index.css adds a
+        // transparent margin up to 24 px).
+        components: { Slider: { handleSize: 16, handleSizeHover: 18 }, Switch: { trackHeight: 24 } },
       }}
     >
       {modalHolder}
@@ -1730,10 +1891,25 @@ export default function App() {
                     calculated={calculated}
                     running={busy}
                   />
+                  {calculated && (
+                    <UnassignedWhy
+                      isDark={isDark}
+                      selectedDate={selectedDate}
+                      total={currentTasks.length}
+                      open={dayBacklogCount}
+                      reasons={openReasons}
+                      // The bound belongs to the schedule the run produced; once that
+                      // has changed it no longer says what is possible now.
+                      lowerBound={planStats.openDay === dayBacklogCount ? planStats.lowerBound?.bound ?? null : null}
+                      onShowTasks={() => showPanel('backlog')}
+                      onShowPlan={() => showPanel('staffing-gap')}
+                    />
+                  )}
                   <PlanReport
                     isDark={isDark}
                     quality={dataQuality}
-                    stats={planStats && planStats.selectedDate === selectedDate ? planStats : null}
+                    stats={calculated ? planStats : null}
+                    current={{ open: dayBacklogCount, total: currentTasks.length }}
                   />
                 </div>
                 <Collapse
@@ -1799,7 +1975,7 @@ export default function App() {
 
           {conflictInfo?.alternatives.length > 0 ? (
             <div>
-              <Text strong>Свободные сотрудники с нужной квалификацией:</Text>
+              <Text strong>Свободные сотрудники с нужным допуском:</Text>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                 {conflictInfo.alternatives.map(alt => (
                   <Button
@@ -1820,7 +1996,7 @@ export default function App() {
               type="warning"
               showIcon
               message="Нет свободных альтернатив"
-              description="Все квалифицированные сотрудники заняты в это время. Можно назначить принудительно."
+              description="Все сотрудники с нужным допуском заняты в это время. Можно назначить принудительно."
             />
           )}
         </Modal>

@@ -93,7 +93,7 @@ export function bucketizeChannels(channels, windowStart, windowDays, granularity
         if (b._seen.has(channel)) continue; // count each channel once per bucket
         b._seen.add(channel);
         b.count++;
-        const qual = t.reqType || '(без квалификации)';
+        const qual = t.reqType || '(без допуска)';
         b.byQual[qual] = (b.byQual[qual] || 0) + 1;
       }
     }

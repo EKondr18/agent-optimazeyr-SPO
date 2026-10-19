@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Row, Col, Card, Statistic, Typography } from 'antd';
 import { getPosDistance } from '../utils/posDistance';
 import { mutedColor, statusColor } from '../utils/uiFormat';
+import { overtimeByShift } from '../utils/overtime';
 
 // `calculated`: the optimizer has been run for this date. Before that nothing
 // is assigned and "Распределено 0 / Бэклог 609" would read like a failure
@@ -20,7 +21,6 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
   // optimizer's internal passes, so they apply the same way whether the
   // schedule came from the optimizer or manual/drag-and-drop assignment.
   const quality = useMemo(() => {
-    const shiftByName = new Map(staffList.map(s => [s.name, s]));
     const byEmployee = {};
     for (const t of assignedTasks) {
       if (!byEmployee[t.employee]) byEmployee[t.employee] = [];
@@ -30,22 +30,12 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     const avgLoad = loads.length > 0 ? loads.reduce((s, v) => s + v, 0) / loads.length : 0;
     const maxLoad = loads.length > 0 ? Math.max(...loads) : 0;
 
-    // For each employee whose day runs past shift end, how late they
-    // actually leave — the latest task's end time vs shiftEnd, not a sum
-    // across every late task (what matters operationally is when they
-    // clock out, not how many individual tasks happened to run late).
-    let overtimeCount = 0;
-    let overtimeMinutesSum = 0;
-    for (const [name, list] of Object.entries(byEmployee)) {
-      const shift = shiftByName.get(name);
-      if (!shift) continue;
-      const latestEnd = new Date(Math.max(...list.map(t => t.end.getTime())));
-      if (latestEnd > shift.shiftEnd) {
-        overtimeCount++;
-        overtimeMinutesSum += (latestEnd - shift.shiftEnd) / 60000;
-      }
-    }
-    const avgOvertimeMinutes = overtimeCount > 0 ? overtimeMinutesSum / overtimeCount : null;
+    // How late each person-shift actually ends (see utils/overtime.js): once per
+    // shift, against that shift's own end — not a sum across late tasks and not
+    // against another shift of the same person.
+    const overtime = overtimeByShift(assignedTasks, staffList);
+    const overtimeCount = overtime.length;
+    const avgOvertimeMinutes = overtimeCount > 0 ? overtime.reduce((s, o) => s + o.minutes, 0) / overtimeCount : null;
 
     // Average distance an employee has to cover between two consecutive
     // (non-overlapping) tasks of their own — exit point of the earlier task
@@ -90,7 +80,7 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
       valueStyle: notCalculated ? grey : { color: ok },
     },
     {
-      title: 'Бэклог',
+      title: 'Не назначено',
       value: notCalculated ? DASH : backlog,
       prefix: '⚠️',
       valueStyle: notCalculated ? grey : { color: backlog > 0 ? bad : ok },
@@ -122,6 +112,7 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
     },
     {
       title: 'Ср. переработка, мин',
+      note: 'на человека, у которого она есть',
       value: !notCalculated && quality.avgOvertimeMinutes != null ? quality.avgOvertimeMinutes : DASH,
       precision: !notCalculated && quality.avgOvertimeMinutes != null ? 0 : undefined,
       prefix: '⏱️',
@@ -148,7 +139,7 @@ export default function MetricsSummary({ tasks, staffList, selectedDate, distanc
           <Col xs={12} sm={6} key={tile.title}>
             <Card size="small" style={{ textAlign: 'center' }} styles={{ body: { padding: '12px 8px' } }}>
               <Statistic
-                title={tile.title}
+                title={tile.note ? <span>{tile.title}<br /><span style={{ fontSize: 12 }}>{tile.note}</span></span> : tile.title}
                 value={tile.value}
                 precision={tile.precision}
                 prefix={tile.prefix}

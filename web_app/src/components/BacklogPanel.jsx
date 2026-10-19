@@ -55,7 +55,7 @@ function BacklogGantt({ unassigned, qualOrder, windowStart, windowDays, isDark, 
           '<b>%{customdata.desc}</b><br>' +
           'Рейс: <b>%{customdata.flight}</b>  |  POS: %{customdata.pos}<br>' +
           'Время: %{customdata.start} – %{customdata.end}  (%{customdata.dur})<br>' +
-          'Квалификация: %{customdata.qual}<br>' +
+          'Допуск: %{customdata.qual}<br>' +
           '<extra>⚠ Не назначено</extra>',
         marker: { color: colors, opacity: 0.9, line: barLine },
       };
@@ -220,7 +220,7 @@ export default function BacklogPanel({
   );
 
   if (unassigned.length === 0) {
-    return <Empty description="Бэклог пуст — все задачи распределены" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+    return <Empty description="Не назначено нет — все задачи распределены" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
 
   function handleAssignClick(task, sel) {

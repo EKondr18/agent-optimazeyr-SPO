@@ -24,7 +24,7 @@ function fmtHours(ms) {
 const UNRESOLVED_INFO = {
   NO_QUAL: {
     title: 'Ни у кого нет допуска',
-    hint: 'Ни на смене, ни в ростере нет никого с этой квалификацией. Закрыть можно, только добавив допуск сотрудникам в справочнике (tb_relation_resource_qualification) или явно разрешив назначать без него — «Правила» на боковой панели.',
+    hint: 'Ни на смене, ни в ростере нет никого с этим допуском. Закрыть можно, только добавив допуск сотрудникам в справочнике (tb_relation_resource_qualification) или явно разрешив назначать без него — «Правила» на боковой панели.',
   },
   TOO_LONG: {
     title: 'Задача длиннее любой смены',
@@ -112,7 +112,7 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark, qua
     })),
     hovertemplate:
       `<b>${action.name}</b><br>` +
-      'Квалификация: %{customdata.qual}<br>' +
+      'Допуск: %{customdata.qual}<br>' +
       'Рейс: %{customdata.flight}  |  POS: %{customdata.pos}<br>' +
       'Время: %{customdata.start} – %{customdata.end}' +
       '<extra></extra>',
@@ -141,8 +141,8 @@ function CallInGantt({ actions, finalTasks, windowStart, windowDays, isDark, qua
           <Plot
             data={[]}
             layout={{
-              height: 40,
-              margin: { l: ML, r: 16, t: 4, b: 26 },
+              height: 52,
+              margin: { l: ML, r: 16, t: 4, b: 38 },
               xaxis: ganttXAxisConfig(range, fontColor, gridColor, true),
               yaxis: { visible: false, fixedrange: true },
               paper_bgcolor: 'rgba(0,0,0,0)',
@@ -240,8 +240,10 @@ export default function StaffingGapPanel({
   const [granularity, setGranularity] = useState(60);
 
   const backlogTasks = useMemo(
-    () => tasks.filter(t => windowDates.includes(t.date) && t.employee === 'Не назначено'),
-    [tasks, windowDates]
+    // The plan below is for the selected day only (the days around it are context),
+    // so the open tasks listed here are that day's — the same count as the tile.
+    () => tasks.filter(t => t.date === targetDate && t.employee === 'Не назначено'),
+    [tasks, targetDate]
   );
 
   const gaps = useMemo(() => computeStaffingGaps({
@@ -254,7 +256,7 @@ export default function StaffingGapPanel({
   const resolution = providedResolution;
 
   if (backlogTasks.length === 0) {
-    return <Empty description="Бэклог пуст — нехватки персонала нет" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+    return <Empty description="Не назначено нет — нехватки персонала нет" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
 
   const cardBg = isDark ? '#1a1a2e' : '#fafafa';
@@ -264,7 +266,7 @@ export default function StaffingGapPanel({
   const unresolved = resolution?.unresolved ?? [];
   const unresolvedByReason = {};
   for (const t of unresolved) {
-    const key = t.reqType || '(без квалификации)';
+    const key = t.reqType || '(без допуска)';
     const reason = resolution?.unresolvedReasons?.[t.id] ?? 'NO_CAPACITY';
     ((unresolvedByReason[reason] ??= {})[key] ??= []).push(t);
   }
@@ -277,13 +279,13 @@ export default function StaffingGapPanel({
           showIcon
           style={{ marginBottom: 16 }}
           message="Список кандидатов на подработку недоступен"
-          description="Загрузите полный набор (tb_resources + tb_relation_resource_qualification), чтобы видеть, кого можно вызвать на смену — сейчас известны только задачи и требуемые квалификации."
+          description="Загрузите полный набор (tb_resources + tb_relation_resource_qualification), чтобы видеть, кого можно вызвать на смену — сейчас известны только задачи и требуемые допуски."
         />
       )}
 
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 12, color: fontColor }}>Гранулярность:</span>
-        <Segmented size="small" value={granularity} onChange={setGranularity} options={GRANULARITY_OPTIONS} />
+        <Segmented value={granularity} onChange={setGranularity} options={GRANULARITY_OPTIONS} />
       </div>
 
       {gaps.map(g => (
