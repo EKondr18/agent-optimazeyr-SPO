@@ -12,11 +12,19 @@
 #          America/Los_Angeles): a "shift day" is always the Moscow day, so
 #          every result must be the same whatever the machine's clock zone is.
 #   build  npm run build (the Vercel-style build, base path "/").
+#   bench  after test and build: npm run bench (the planner on a fixed synthetic dataset: rule
+#          violations, open tasks against the stored baseline, open >= lower bound) and
+#          npm run bench:determinism (one input, one result, also across process timezones).
+#   ui-smoke  the page in a real browser (Playwright, Chromium) on synthetic CSV files in three
+#          browser timezones: load, run the optimizer, apply the call-in plan; no console
+#          errors, same numbers everywhere. Logs and screenshots are kept as an artifact when it fails.
 #
 # Reproduce locally (from the repository root):
 #   cd web_app && npm ci
 #   for tz in UTC Europe/Moscow America/Los_Angeles; do TZ=$tz npm test; done
 #   npm run build
+#   npm run bench && npm run bench:determinism
+#   npm install --no-save playwright@1.56.1 && npx playwright install chromium && npm run bench:ui
 #
 # To make these checks block a merge, the repository owner marks the jobs
 # "test (TZ=UTC)", "test (TZ=Europe/Moscow)", "test (TZ=America/Los_Angeles)"
@@ -115,3 +123,78 @@ jobs:
         run: |
           du -sh dist/
           find dist/ -type f | sort
+
+  bench:
+    name: "bench"
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web_app
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Set up Node.js 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "web_app/package-lock.json"
+
+      - name: "Install dependencies (exactly as locked)"
+        run: npm ci
+
+      # Synthetic data only (a fixed seed): no real export is ever needed or read here.
+      - name: "Benchmark against the stored baseline"
+        run: npm run bench
+
+      - name: "Determinism (twice in one process, and under three timezones)"
+        run: npm run bench:determinism
+
+  ui-smoke:
+    name: "ui-smoke"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web_app
+    env:
+      UI_SMOKE_OUT: ${{ github.workspace }}/web_app/ui-smoke-out
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Set up Node.js 22"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "web_app/package-lock.json"
+
+      - name: "Install dependencies (exactly as locked)"
+        run: npm ci
+
+      # Playwright is a test tool, not a dependency of the page: it is installed for this job only
+      # (--no-save leaves package.json and the lock file alone).
+      - name: "Install Playwright and its Chromium"
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: "Page in a browser: load, optimize, apply the plan (three timezones)"
+        run: npm run bench:ui
+
+      - name: "Keep screenshots and the log of a failed run"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-failure
+          path: web_app/ui-smoke-out
+          if-no-files-found: ignore
+          retention-days: 7

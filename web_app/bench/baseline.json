@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "generator": 1,
+  "config": {
+    "seed": 1,
+    "days": 3,
+    "people": 100,
+    "tasksMin": 400,
+    "tasksMax": 700,
+    "island": false
+  },
+  "days": {
+    "2026-03-10": {
+      "lns0": {
+        "tasksDay": 599,
+        "openDay": 35,
+        "lowerBound": 23,
+        "walkM": 151298,
+        "overtimeMin": 275,
+        "cost": 1589929,
+        "hash": "6238c42f9d696dff"
+      },
+      "default": {
+        "tasksDay": 599,
+        "openDay": 33,
+        "lowerBound": 23,
+        "walkM": 150381,
+        "overtimeMin": 225,
+        "cost": 1591343,
+        "hash": "658480e0bb17ae27"
+      }
+    },
+    "2026-03-11": {
+      "lns0": {
+        "tasksDay": 476,
+        "openDay": 26,
+        "lowerBound": 19,
+        "walkM": 135461,
+        "overtimeMin": 155,
+        "cost": 2240638,
+        "hash": "9c9ab6bdf05b7fe4"
+      },
+      "default": {
+        "tasksDay": 476,
+        "openDay": 26,
+        "lowerBound": 19,
+        "walkM": 132602,
+        "overtimeMin": 155,
+        "cost": 2233520,
+        "hash": "b72fb69c4c078fc0"
+      }
+    },
+    "2026-03-12": {
+      "lns0": {
+        "tasksDay": 654,
+        "openDay": 49,
+        "lowerBound": 25,
+        "walkM": 175634,
+        "overtimeMin": 675,
+        "cost": 1855895,
+        "hash": "4be56715e4e65196"
+      },
+      "default": {
+        "tasksDay": 654,
+        "openDay": 48,
+        "lowerBound": 25,
+        "walkM": 172939,
+        "overtimeMin": 675,
+        "cost": 1855219,
+        "hash": "edcd6448a0136897"
+      }
+    }
+  }
+}
